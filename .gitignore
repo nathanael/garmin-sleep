@@ -6,3 +6,5 @@ health.db
 sync.log
 sync-error.log
 .mcp.json
+firebase-admin.json
+.config.json
