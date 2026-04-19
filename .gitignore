@@ -1,0 +1,8 @@
+.venv/
+.claude/
+__pycache__/
+*.pyc
+health.db
+sync.log
+sync-error.log
+.mcp.json
