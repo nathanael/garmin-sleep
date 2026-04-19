@@ -1,4 +1,4 @@
-# Garmin Sleep
+# Garmin Sleep Love
 
 *A private, local-first sleep dashboard for your Garmin data — no cloud, no third-party accounts, your data never leaves your machine.*
 

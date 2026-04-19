@@ -200,7 +200,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8484))
     server = HTTPServer(("", port), Handler)
-    print(f"Sleep Analyzer → http://localhost:{port}")
+    print(f"Garmin Sleep Love → http://localhost:{port}")
     print(f"Database: {DB_PATH} ({'found' if DB_PATH.exists() else 'NOT FOUND'})")
     print(f"Authenticated: {auth.is_authenticated}")
     try:
