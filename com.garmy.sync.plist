@@ -6,8 +6,8 @@
     <string>com.garmy.sync</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/monster/dev/garmy/.venv/bin/python</string>
-        <string>/Users/monster/dev/garmy/sync.py</string>
+        <string>__REPO_DIR__/.venv/bin/python</string>
+        <string>__REPO_DIR__/sync.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -17,9 +17,9 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/monster/dev/garmy/sync.log</string>
+    <string>__REPO_DIR__/sync.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/monster/dev/garmy/sync-error.log</string>
+    <string>__REPO_DIR__/sync-error.log</string>
     <key>RunAtLoad</key>
     <true/>
 </dict>

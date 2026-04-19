@@ -1,17 +1,22 @@
 #!/bin/bash
-# Install the daily 7am Garmin sync schedule
+# Install the daily 7am Garmin sync (launchd).
+set -e
 
-# Unload if already installed
-launchctl unload ~/Library/LaunchAgents/com.garmy.sync.plist 2>/dev/null
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLIST_SRC="$REPO_DIR/com.garmy.sync.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/com.garmy.sync.plist"
 
-# Copy plist to LaunchAgents
-cp /Users/monster/dev/garmy/com.garmy.sync.plist ~/Library/LaunchAgents/
+# Unload existing agent if present
+launchctl unload "$PLIST_DST" 2>/dev/null || true
 
-# Load it
-launchctl load ~/Library/LaunchAgents/com.garmy.sync.plist
+# Render template → LaunchAgents
+mkdir -p "$HOME/Library/LaunchAgents"
+sed "s|__REPO_DIR__|$REPO_DIR|g" "$PLIST_SRC" > "$PLIST_DST"
 
-echo "Done! Garmin data will sync every day at 7am."
-echo "Logs: ~/dev/garmy/sync.log"
+launchctl load "$PLIST_DST"
+
+echo "Installed: Garmin sync will run every day at 7am."
+echo "Logs:      $REPO_DIR/sync.log"
 echo ""
-echo "To check it's running:  launchctl list | grep garmy"
-echo "To stop it:             launchctl unload ~/Library/LaunchAgents/com.garmy.sync.plist"
+echo "Check:   launchctl list | grep garmy"
+echo "Remove:  launchctl unload $PLIST_DST"
