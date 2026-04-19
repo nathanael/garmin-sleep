@@ -6,7 +6,7 @@
 
 ## What it shows
 
-- **Summary cards and trend charts** — sleep score, duration, REM, deep, respiration, SpO2, stress, HRV, resting heart rate. Each card carries a week-over-week delta.
+- **Summary cards and trend charts** — sleep score, duration, REM, deep, respiration, SpO2, stress, HRV, resting heart rate. Each card shows the delta against the prior period of the same length.
 - **Stage breakdown** — deep, REM, and light minutes stacked per night, so you can see composition change at a glance.
   ![Stage breakdown](docs/screenshots/architecture.png)
 - **Compare any two periods** — drag-to-select on any chart, or pick two windows explicitly, and get a day-by-day overlay with summary deltas.
