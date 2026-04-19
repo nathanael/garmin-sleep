@@ -1,74 +1,20 @@
-# Garmin Sleep Analyzer v1.9.0
+# Standalone mode
 
-A standalone single-page app for analyzing Garmin sleep data exports.
+> For the full project — live Garmin sync, dashboard server, install instructions — see the root [README](../README.md). This file documents the no-server, drag-drop-only path.
 
-## Quick Start
+If you'd rather not give your Garmin credentials to anything, you can feed the dashboard a static data export instead. No Python, no network, no server — just the browser.
 
-1. **Double-click `index.html`** to open in your default browser
-2. Drag and drop your Garmin JSON sleep files onto the drop zone
-3. Data is automatically saved to browser localStorage
+## Quick start
 
-## Getting Your Garmin Data
+1. Request your data from Garmin: [garmin.com/account/datamanagement](https://www.garmin.com/account/datamanagement/) → select the **Sleep** category → wait for the email → download and unzip.
+2. In the unzipped archive, open `DI_CONNECT/DI_CONNECT_FITNESS/` and find any JSON files with `sleep` in the name.
+3. Double-click `index.html` in this directory to open it in your default browser.
+4. Drag the JSON files onto the drop zone. Data is cached to `localStorage` so you only need to do this once per browser.
 
-1. Go to https://www.garmin.com/account/datamanagement/
-2. Request data export (select "Sleep" category)
-3. Wait for email with download link
-4. Unzip and look for files in: `DI_CONNECT/DI_CONNECT_FITNESS/`
-5. Drop any JSON files with "sleep" in the name
+## Expected JSON schema
 
-## Features
+The loader looks for records shaped like this:
 
-### Data Management
-- **Drag & drop** JSON files to load
-- **Auto-saves** to browser localStorage
-- **Merge mode** to combine multiple exports
-- **Collapsible upload section** after data loads
-
-### Analysis Views
-- **Days / Weeks / Months** aggregation toggle
-- **Date range presets**: 7d, 14d, 30d, 3mo, 6mo, 1y, All
-- **Period navigation** (◀◀ / ▶▶ buttons)
-
-### Charts
-- REM Sleep (with 90min target line)
-- Deep Sleep (with 60min minimum line)
-- Sleep Score
-- Respiration Rate
-- Sleep Stress
-- SpO2 (Lowest)
-
-### Metrics Tracked
-| Metric | What It Shows |
-|--------|---------------|
-| Sleep Score | Garmin's overall score (0-100) |
-| Duration | Total sleep time |
-| REM Sleep | Minutes in REM stage |
-| Deep Sleep | Minutes in deep stage |
-| Respiration | Average breathing rate (brpm) |
-| SpO2 | Blood oxygen (avg and lowest) |
-| Stress | Sleep stress score |
-
-### Visual Indicators
-- **Red text**: Below optimal (e.g., REM < 60min)
-- **Green text**: Above target (e.g., REM > 90min)
-- **Yellow text**: Elevated stress or low deep sleep
-- **Reference lines**: Target/threshold markers on charts
-
-## Technical Notes
-
-### Dependencies (loaded via CDN)
-- React 18
-- Recharts 2.10
-- Tailwind CSS
-- Babel (for JSX transformation)
-
-### Data Storage
-- Uses browser `localStorage`
-- Data persists between sessions
-- "Clear all" button removes all saved data
-
-### File Format Expected
-Garmin sleep JSON with fields like:
 ```json
 {
   "calendarDate": "2025-01-15",
@@ -87,36 +33,14 @@ Garmin sleep JSON with fields like:
 }
 ```
 
-## Limitations
+Extra fields are ignored. Missing fields just leave the corresponding chart blank.
 
-- **No HRV data** (not included in Garmin exports)
-- **Requires JavaScript** enabled in browser
-- **localStorage limits** (~5-10MB depending on browser)
-- **Single-user** (data stored in browser, not synced)
+## Limitations of standalone mode
 
-## Offline Use
+- **No HRV.** HRV is not included in Garmin's own data export — it is only available through the live sync path described in the root README.
+- **`localStorage` caps.** Browsers allow roughly 5–10 MB. A few years of sleep data fits comfortably; decades might not.
+- **Single browser.** Data is tied to the browser profile it was dropped into. There is no sync.
 
-Works completely offline after first load (CDN resources are cached).
+## Dependencies
 
-## For Development
-
-The full-featured version with comparison mode, drag-to-select, and trend indicators is in:
-- `garmin_sleep_analyzer.jsx` (React component)
-
-This standalone HTML version is simplified for easy local use.
-
----
-
-## Version History
-
-- **v1.9.0**: Collapsible upload section, auto-collapse on data load
-- **v1.8.3**: Gray comparison timeline for consistency
-- **v1.8.2**: Fixed date sorting bug (reverse mutation)
-- **v1.8.1**: Fixed date sorting with Date objects
-- **v1.8.0**: Trend indicators, prior period comparison, fixed date picker
-- **v1.7.1**: Comparison card color refinement
-- **v1.7.0**: Single drag-to-select, auto-comparison
-
----
-
-*Built for health tracking and sleep optimization analysis.*
+Loaded from CDN on first open (and cached by the browser for offline use afterwards): React 18, Recharts 2.10, Tailwind, Babel Standalone.
