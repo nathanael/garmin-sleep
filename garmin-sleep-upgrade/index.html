@@ -37,13 +37,12 @@ function GarminSleepAnalyzer() {
   const [dragOver, setDragOver] = useState(false);
   const [garmyLoading, setGarmyLoading] = useState(false);
   const [garmyDays, setGarmyDays] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
   const [authStatus, setAuthStatus] = useState(null); // null=unknown, true/false
   const [copyToast, setCopyToast] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showDropzone, setShowDropzone] = useState(false);
   const [syncJob, setSyncJob] = useState(null);
+  const syncing = syncJob?.running ?? false;
   const [loginForm, setLoginForm] = useState({ email: '', password: '', mfa: '' });
   const [loginState, setLoginState] = useState('idle'); // idle, loading, mfa, error
   const [loginError, setLoginError] = useState('');
@@ -102,6 +101,18 @@ function GarminSleepAnalyzer() {
   }, []);
 
   useEffect(() => {
+    if (!syncJob || !syncJob.running) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      const job = await pollSyncStatus();
+      if (cancelled) return;
+      loadFromGarmy();               // re-read whatever has landed so far
+      if (!job.running) clearInterval(id);
+    }, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [syncJob?.running, syncJob?.id]);
+
+  useEffect(() => {
     if (sleepData.length > 0) {
       const dates = sleepData.map(d => d.calendarDate).sort();
       const minDate = dates[0];
@@ -152,6 +163,7 @@ function GarminSleepAnalyzer() {
       setShowLogin(false);
       setLoginState('idle');
       setLoginForm({ email: '', password: '', mfa: '' });
+      startProgressiveSync();
     } catch (err) {
       setLoginState('error');
       setLoginError(err.message);
@@ -174,6 +186,7 @@ function GarminSleepAnalyzer() {
       setShowLogin(false);
       setLoginState('idle');
       setLoginForm({ email: '', password: '', mfa: '' });
+      startProgressiveSync();
     } catch (err) {
       setLoginState('mfa');
       setLoginError(err.message);
@@ -183,6 +196,38 @@ function GarminSleepAnalyzer() {
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
     setAuthStatus(false);
+  };
+
+  const pollSyncStatus = async () => {
+    const res = await fetch('/api/sync/status');
+    const job = await res.json();
+    setSyncJob(job);
+    return job;
+  };
+
+  const startProgressiveSync = async () => {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    // 409 means a job is already running — adopt it instead of starting a second.
+    const body = await res.json();
+    setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
+  };
+
+  const syncLatest = async () => {
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - 6);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start: iso(start), end: iso(today) }),
+    });
+    const body = await res.json();
+    setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
   };
 
   const LoginModal = () => (
@@ -233,7 +278,8 @@ function GarminSleepAnalyzer() {
     try {
       const url = garmyDays ? `/api/sleep?days=${garmyDays}` : '/api/sleep';
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      if (res.status === 404) { setError(null); return; }   // DB not created yet
+      if (!res.ok) { setError(`Garmy DB: Server error: ${res.status}`); return; }
       const records = await res.json();
 
       const valid = records.filter(d => d.calendarDate && (d.deepSleepSeconds || d.lightSleepSeconds || d.remSleepSeconds));
@@ -250,27 +296,6 @@ function GarminSleepAnalyzer() {
       setError(`Garmy DB: ${err.message}`);
     } finally {
       setGarmyLoading(false);
-    }
-  };
-
-  const syncFromGarmin = async (days) => {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
-      const res = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days }),
-      });
-      const data = await res.json();
-      setSyncResult(data);
-      if (data.ok) {
-        await loadFromGarmy();
-      }
-    } catch (err) {
-      setSyncResult({ ok: false, error: err.message });
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -927,6 +952,34 @@ function GarminSleepAnalyzer() {
               <p className="text-sm text-gray-500">Requires server.py — run it and reload.</p>
             )}
 
+            {authStatus === true && syncJob?.running && (
+              <div className="space-y-2">
+                <p className="text-lg text-gray-200">
+                  {syncJob.stage === 1 ? 'Getting your last 7 days…' : `Filling in history — stage ${syncJob.stage} of ${syncJob.total}`}
+                </p>
+                <div className="w-full bg-gray-700 rounded-full h-1.5 max-w-sm mx-auto">
+                  <div
+                    className="bg-blue-500 h-1.5 rounded-full transition-all"
+                    style={{ width: `${((syncJob.stages?.length || 0) / (syncJob.total || 3)) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {authStatus === true && syncJob && !syncJob.running && syncJob.error && (
+              <p className="text-sm text-red-400">{syncJob.error}</p>
+            )}
+            {authStatus === true && !syncJob?.running && !syncJob?.error && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500">Signed in, no data yet.</p>
+                <button
+                  onClick={startProgressiveSync}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium"
+                >
+                  Sync from Garmin
+                </button>
+              </div>
+            )}
+
             <div className="mt-6 pt-4 border-t border-gray-700">
               <button
                 onClick={() => setShowDropzone(v => !v)}
@@ -1015,12 +1068,26 @@ function GarminSleepAnalyzer() {
         <div className="flex items-center justify-between mb-3 text-xs">
           <div className="text-gray-400 font-medium">
             Garmin Sleep Analyzer <span className="text-gray-600 font-normal ml-1">v1.9.1</span>
+            {syncJob?.running && (
+              <span className="ml-3 text-xs text-blue-300 bg-blue-900/40 px-2 py-1 rounded-full">
+                Syncing history — stage {syncJob.stage} of {syncJob.total}
+              </span>
+            )}
+            {syncJob && !syncJob.running && syncJob.error && (
+              <button
+                onClick={() => setSyncJob(null)}
+                className="ml-3 text-xs text-red-300 bg-red-900/40 px-2 py-1 rounded-full"
+                title="Dismiss"
+              >
+                Sync stopped: {syncJob.error} ×
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {authStatus === true && (
               <>
                 <button
-                  onClick={() => syncFromGarmin(7)}
+                  onClick={syncLatest}
                   disabled={syncing}
                   className="text-green-400 hover:text-green-300 disabled:text-gray-500 underline underline-offset-2"
                 >
@@ -1835,24 +1902,13 @@ function GarminSleepAnalyzer() {
                       </span>
                       <button
                         onClick={async () => {
-                          setSyncing(true);
-                          setSyncResult(null);
-                          const poll = setInterval(() => loadFromGarmy(), 3000);
-                          try {
-                            const res = await fetch('/api/sync', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ start: dateRange.start, end: dateRange.end }),
-                            });
-                            const data = await res.json();
-                            setSyncResult(data);
-                            if (data.ok) await loadFromGarmy();
-                          } catch (err) {
-                            setSyncResult({ ok: false, error: err.message });
-                          } finally {
-                            clearInterval(poll);
-                            setSyncing(false);
-                          }
+                          const res = await fetch('/api/sync', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ start: dateRange.start, end: dateRange.end }),
+                          });
+                          const body = await res.json();
+                          setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
                         }}
                         disabled={syncing}
                         className="block ml-auto text-[10px] text-gray-600 hover:text-gray-400 transition-colors mt-0.5"
