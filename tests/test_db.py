@@ -57,6 +57,28 @@ class ConnectTest(unittest.TestCase):
         reader.commit()
         self.assertEqual(len(reader.execute("SELECT v FROM t").fetchall()), 2)
 
+    def test_connect_survives_lock_during_journal_mode_upgrade(self):
+        """First sync run: health.db is still in its default (non-WAL) journal
+        mode when db.connect() tries to upgrade it, and a writer is mid
+        BEGIN IMMEDIATE. PRAGMA busy_timeout does not cover PRAGMA
+        journal_mode = WAL, so that pragma can raise "database is locked"
+        immediately (not after waiting out busy_timeout). db.connect() must
+        still return a usable connection rather than propagating that error.
+        """
+        mode = sqlite3.connect(str(self.path)).execute("PRAGMA journal_mode").fetchone()[0]
+        self.assertEqual(mode.lower(), "delete")  # precondition: not WAL yet
+
+        writer = sqlite3.connect(str(self.path), isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("INSERT INTO t (v) VALUES ('during')")
+
+        conn = db.connect(self.path)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute("SELECT 1").fetchone(), (1,))
+
+        writer.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

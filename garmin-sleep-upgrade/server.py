@@ -294,15 +294,19 @@ class Handler(SimpleHTTPRequestHandler):
 
         date_filter = f"  AND metric_date >= date('now', '-{days} days')\n" if days else ""
 
-        conn = db.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = None
         try:
+            conn = db.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
             query = build_sleep_query(table_columns(conn, SLEEP_TABLE), date_filter)
             rows = conn.execute(query).fetchall()
             records = [shape_sleep_row(row) for row in rows]
             json_response(self, records)
+        except sqlite3.OperationalError as e:
+            self.send_error(503, f"Database busy: {e}")
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def log_message(self, format, *args):
         if "/api/" in str(args[0]):

@@ -19,5 +19,16 @@ def connect(path, isolation_level="DEFERRED"):
     """
     conn = sqlite3.connect(str(path), isolation_level=isolation_level)
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    conn.execute("PRAGMA journal_mode = WAL")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        # PRAGMA journal_mode = WAL needs an exclusive lock to rewrite the
+        # database header, and busy_timeout does not cover that: on a
+        # non-WAL database with a concurrent writer (e.g. first sync run,
+        # before anyone has set WAL yet) this can raise "database is
+        # locked" immediately instead of waiting out the timeout. The
+        # connection is still perfectly usable in whatever journal mode is
+        # already active; journal_mode persists in the file once any
+        # connection successfully sets WAL, so this is a one-time race.
+        pass
     return conn
