@@ -65,7 +65,9 @@ class ConnectTest(unittest.TestCase):
         immediately (not after waiting out busy_timeout). db.connect() must
         still return a usable connection rather than propagating that error.
         """
-        mode = sqlite3.connect(str(self.path)).execute("PRAGMA journal_mode").fetchone()[0]
+        precondition_conn = sqlite3.connect(str(self.path))
+        self.addCleanup(precondition_conn.close)
+        mode = precondition_conn.execute("PRAGMA journal_mode").fetchone()[0]
         self.assertEqual(mode.lower(), "delete")  # precondition: not WAL yet
 
         writer = sqlite3.connect(str(self.path), isolation_level=None)
