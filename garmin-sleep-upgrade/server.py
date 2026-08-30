@@ -96,7 +96,7 @@ SELECT
     {select_list}
 FROM {SLEEP_TABLE}
 WHERE user_id = 1
-{presence_clause}{date_filter}ORDER BY metric_date
+{presence_clause}{date_filter}ORDER BY calendarDate
 """
 
 

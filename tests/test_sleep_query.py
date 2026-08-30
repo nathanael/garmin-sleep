@@ -154,6 +154,28 @@ class BuildSleepQueryTest(unittest.TestCase):
         row = conn.execute(query).fetchone()
         self.assertIsNotNone(row)
 
+    def test_query_executes_when_metric_date_column_is_absent(self):
+        # metric_date is the first SLEEP_FIELDS entry and is guarded like any
+        # other column (becomes NULL AS calendarDate when absent). The
+        # ORDER BY clause must follow the same guard: ordering by the raw
+        # physical column name crashes once it's gone, so the query must
+        # order by the output alias instead.
+        present = [c for c in ALL_COLUMNS if c != "metric_date"]
+        path = Path(self.dir.name) / "no_metric_date.db"
+        conn = make_db(path, present)
+        self.addCleanup(conn.close)
+
+        columns = server.table_columns(conn, "daily_health_metrics")
+        self.assertNotIn("metric_date", columns)
+        query = server.build_sleep_query(columns)
+
+        # This is the assertion that fails against the old
+        # "ORDER BY metric_date" template (sqlite3.OperationalError: no such
+        # column: metric_date).
+        row = conn.execute(query).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(dict(row)["calendarDate"])
+
 
 class ShapeSleepRowTest(unittest.TestCase):
     """Covers the spo2SleepSummary/sleepScores response-shaping behavior
