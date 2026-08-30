@@ -101,6 +101,16 @@ function GarminSleepAnalyzer() {
   }, []);
 
   useEffect(() => {
+    // Reload recovery: if a sync job was already running server-side when
+    // this page loaded (e.g. a mid-sync reload), adopt it read-only so the
+    // poll effect below resumes showing progress instead of stranding the
+    // user on the idle "no data yet" view. Read-only GET — never starts a job.
+    fetch('/api/sync/status').then(r => r.json())
+      .then(job => { if (job.running) setSyncJob(job); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!syncJob || !syncJob.running) return;
     let cancelled = false;
     const id = setInterval(async () => {
