@@ -21,30 +21,104 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 auth = AuthClient()
 mfa_state = {}  # temporary storage for MFA flow
 
-SLEEP_QUERY = """
+# /api/sleep field map: (source_column, sql_expression, output_alias).
+#
+# garmy's `localdb` schema has changed columns across versions (garmy 2.0.0
+# dropped avg_sleep_stress, sleep_score, lowest_spo2, and sleep_need_minutes
+# from daily_health_metrics), and will likely change again. build_sleep_query()
+# checks each source_column against the table's live schema and substitutes
+# NULL AS <alias> for anything missing, so the endpoint keeps returning its
+# usual response shape instead of raising sqlite3.OperationalError.
+SLEEP_FIELDS = [
+    ("metric_date", "metric_date", "calendarDate"),
+    ("deep_sleep_hours", "CAST(ROUND(deep_sleep_hours * 3600) AS INTEGER)", "deepSleepSeconds"),
+    ("light_sleep_hours", "CAST(ROUND(light_sleep_hours * 3600) AS INTEGER)", "lightSleepSeconds"),
+    ("rem_sleep_hours", "CAST(ROUND(rem_sleep_hours * 3600) AS INTEGER)", "remSleepSeconds"),
+    ("awake_hours", "CAST(ROUND(awake_hours * 3600) AS INTEGER)", "awakeSleepSeconds"),
+    ("avg_sleep_respiration_value", "avg_sleep_respiration_value", "averageRespiration"),
+    ("lowest_respiration_value", "lowest_respiration_value", "lowestRespiration"),
+    ("avg_sleep_stress", "avg_sleep_stress", "avgSleepStress"),
+    ("sleep_score", "sleep_score", "sleep_score"),
+    ("average_spo2", "average_spo2", "average_spo2"),
+    ("lowest_spo2", "lowest_spo2", "lowest_spo2"),
+    ("hrv_last_night_avg", "hrv_last_night_avg", "hrvOvernight"),
+    ("hrv_weekly_avg", "hrv_weekly_avg", "hrvWeeklyAvg"),
+    ("hrv_status", "hrv_status", "hrvStatus"),
+    ("resting_heart_rate", "resting_heart_rate", "restingHr"),
+    ("body_battery_high", "body_battery_high", "bodyBatteryHigh"),
+    ("sleep_need_minutes", "sleep_need_minutes", "sleepNeedMinutes"),
+]
+
+# Columns referenced by the "row has some sleep data" filter. Guarded the
+# same way: any that don't exist are dropped out of the OR'd condition, and
+# if none exist at all the whole clause is omitted.
+SLEEP_PRESENCE_COLUMNS = ["deep_sleep_hours", "light_sleep_hours", "rem_sleep_hours"]
+
+SLEEP_TABLE = "daily_health_metrics"
+
+
+def table_columns(conn, table):
+    """Return the set of column names that currently exist in `table`.
+
+    `table` is always one of our own constants, never request input.
+    """
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def build_sleep_query(available_columns, date_filter=""):
+    """Build the /api/sleep SELECT against whatever columns actually exist.
+
+    `available_columns` is the live set of column names on daily_health_metrics
+    (from table_columns()). `date_filter` is the pre-formatted, already-safe
+    "  AND metric_date >= date(...)\\n" fragment (or "") from serve_sleep_api.
+    """
+    available_columns = set(available_columns)
+
+    select_list = ",\n    ".join(
+        f"{expr} AS {alias}" if source in available_columns else f"NULL AS {alias}"
+        for source, expr, alias in SLEEP_FIELDS
+    )
+
+    presence_conditions = [
+        f"{col} IS NOT NULL" for col in SLEEP_PRESENCE_COLUMNS if col in available_columns
+    ]
+    presence_clause = (
+        f"  AND ({' OR '.join(presence_conditions)})\n" if presence_conditions else ""
+    )
+
+    return f"""
 SELECT
-    metric_date AS calendarDate,
-    CAST(ROUND(deep_sleep_hours * 3600) AS INTEGER) AS deepSleepSeconds,
-    CAST(ROUND(light_sleep_hours * 3600) AS INTEGER) AS lightSleepSeconds,
-    CAST(ROUND(rem_sleep_hours * 3600) AS INTEGER) AS remSleepSeconds,
-    CAST(ROUND(awake_hours * 3600) AS INTEGER) AS awakeSleepSeconds,
-    avg_sleep_respiration_value AS averageRespiration,
-    lowest_respiration_value AS lowestRespiration,
-    avg_sleep_stress AS avgSleepStress,
-    sleep_score,
-    average_spo2,
-    lowest_spo2,
-    hrv_last_night_avg AS hrvOvernight,
-    hrv_weekly_avg AS hrvWeeklyAvg,
-    hrv_status AS hrvStatus,
-    resting_heart_rate AS restingHr,
-    body_battery_high AS bodyBatteryHigh,
-    sleep_need_minutes AS sleepNeedMinutes
-FROM daily_health_metrics
+    {select_list}
+FROM {SLEEP_TABLE}
 WHERE user_id = 1
-  AND (deep_sleep_hours IS NOT NULL OR light_sleep_hours IS NOT NULL OR rem_sleep_hours IS NOT NULL)
-{}ORDER BY metric_date
+{presence_clause}{date_filter}ORDER BY metric_date
 """
+
+
+def shape_sleep_row(row):
+    """Nest spo2 and sleep-score fields the way the frontend expects.
+
+    A field reads as None here whether the DB column exists but the value is
+    NULL, or the column doesn't exist and build_sleep_query() substituted
+    NULL AS <alias> for it — both cases are handled identically, so a garmy
+    schema that's missing a column produces the same JSON shape (key absent)
+    as one that has the column with a NULL value in it.
+    """
+    r = dict(row)
+    avg_spo2 = r.pop("average_spo2", None)
+    low_spo2 = r.pop("lowest_spo2", None)
+    spo2_obj = {}
+    if avg_spo2 is not None:
+        spo2_obj["averageSPO2"] = avg_spo2
+    if low_spo2 is not None:
+        spo2_obj["lowestSPO2"] = low_spo2
+    if spo2_obj:
+        r["spo2SleepSummary"] = spo2_obj
+    # Nest sleep score as analyzer expects
+    score = r.pop("sleep_score", None)
+    if score is not None:
+        r["sleepScores"] = {"overallScore": score}
+    return r
 
 
 def json_response(handler, data, status=200):
@@ -187,30 +261,13 @@ class Handler(SimpleHTTPRequestHandler):
                 pass
 
         date_filter = f"  AND metric_date >= date('now', '-{days} days')\n" if days else ""
-        query = SLEEP_QUERY.format(date_filter)
 
         conn = db.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         try:
+            query = build_sleep_query(table_columns(conn, SLEEP_TABLE), date_filter)
             rows = conn.execute(query).fetchall()
-            records = []
-            for row in rows:
-                r = dict(row)
-                # Nest spo2 fields as analyzer expects
-                avg_spo2 = r.pop("average_spo2", None)
-                low_spo2 = r.pop("lowest_spo2", None)
-                spo2_obj = {}
-                if avg_spo2 is not None:
-                    spo2_obj["averageSPO2"] = avg_spo2
-                if low_spo2 is not None:
-                    spo2_obj["lowestSPO2"] = low_spo2
-                if spo2_obj:
-                    r["spo2SleepSummary"] = spo2_obj
-                # Nest sleep score as analyzer expects
-                score = r.pop("sleep_score", None)
-                if score is not None:
-                    r["sleepScores"] = {"overallScore": score}
-                records.append(r)
+            records = [shape_sleep_row(row) for row in rows]
             json_response(self, records)
         finally:
             conn.close()
