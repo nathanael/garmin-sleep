@@ -3,9 +3,9 @@
 
 import json
 import sqlite3
-import subprocess
 import sys
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+from datetime import date
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -20,6 +20,11 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 auth = AuthClient()
 mfa_state = {}  # temporary storage for MFA flow
+
+RUNNER = sync_jobs.JobRunner(
+    str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable,
+    str(SYNC_SCRIPT),
+)
 
 # /api/sleep field map: (source_column, sql_expression, output_alias).
 #
@@ -155,6 +160,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.serve_sleep_api(parsed.query)
         elif parsed.path == "/api/auth/status":
             self.serve_auth_status()
+        elif parsed.path == "/api/sync/status":
+            json_response(self, RUNNER.status())
         else:
             super().do_GET()
 
@@ -225,25 +232,24 @@ class Handler(SimpleHTTPRequestHandler):
         body = read_body(self)
         start_date = body.get("start")
         end_date = body.get("end")
-        days = body.get("days", 7)
 
-        python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
         if start_date and end_date:
-            cmd = [python, str(SYNC_SCRIPT), "--range", start_date, end_date]
+            ranges = [(start_date, end_date)]
         else:
-            cmd = [python, str(SYNC_SCRIPT), str(days)]
+            ranges = sync_jobs.chain_ranges(date.today())
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-            resp = {
-                "ok": result.returncode == 0,
-                "output": result.stdout.strip(),
-                "error": (result.stdout.strip() + " " + result.stderr.strip()).strip() if result.returncode != 0 else None,
-            }
-        except subprocess.TimeoutExpired:
-            resp = {"ok": False, "output": "", "error": "Sync timed out (10 min)"}
+        job_id, job = RUNNER.start(ranges)
+        if job_id is None:
+            json_response(
+                self, {"error": "sync already running", "job": job}, 409
+            )
+            return
 
-        json_response(self, resp)
+        json_response(
+            self,
+            {"job_id": job_id, "stage": job["stage"], "total": job["total"]},
+            202,
+        )
 
     # --- Sleep data endpoint ---
 
@@ -280,7 +286,7 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8484))
-    server = HTTPServer(("", port), Handler)
+    server = ThreadingHTTPServer(("", port), Handler)
     print(f"Garmin Sleep Love → http://localhost:{port}")
     print(f"Database: {DB_PATH} ({'found' if DB_PATH.exists() else 'NOT FOUND'})")
     print(f"Authenticated: {auth.is_authenticated}")
