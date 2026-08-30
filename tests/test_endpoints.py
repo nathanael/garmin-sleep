@@ -87,9 +87,9 @@ class SyncEndpointTest(unittest.TestCase):
         # stage blocks on a release file that does not exist yet, so the
         # job is *guaranteed* to still be running when the second POST is
         # sent -- this isn't a timing race, it's controlled by the test.
-        tmpdir = tempfile.mkdtemp()
-        self.addCleanup(lambda: os.path.exists(release) and os.unlink(release))
-        release = os.path.join(tmpdir, "release")
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        release = os.path.join(tmpdir.name, "release")
         server.RUNNER = sync_jobs.JobRunner(sys.executable, BLOCKING_STUB, timeout=30)
         os.environ["STUB_RELEASE_FILE"] = release
         self.addCleanup(os.environ.pop, "STUB_RELEASE_FILE", None)
