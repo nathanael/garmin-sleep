@@ -89,10 +89,32 @@ class JobRunnerTest(unittest.TestCase):
 
     def test_status_copy_is_not_shared_mutable_state(self):
         self.runner.start([("2026-08-24", "2026-08-30")])
+        final = wait_until_done(self.runner)
         snapshot = self.runner.status()
+
+        # Mutate the snapshot's stages list and individual stage fields
         snapshot["stages"].append({"bogus": True})
-        wait_until_done(self.runner)
-        self.assertNotIn({"bogus": True}, self.runner.status()["stages"])
+        snapshot["stages"][0]["ok"] = False
+        snapshot["stages"][0]["range"].append("mutated")
+
+        # Verify internal state is unchanged
+        current = self.runner.status()
+        self.assertNotIn({"bogus": True}, current["stages"])
+        self.assertTrue(current["stages"][0]["ok"])
+        self.assertEqual(current["stages"][0]["range"], ["2026-08-24", "2026-08-30"])
+
+    def test_nonexistent_script_path_clears_running_and_records_error(self):
+        runner = sync_jobs.JobRunner(sys.executable, "/nonexistent/path/to/sync.py", timeout=30)
+        job_id, job = runner.start([("2026-08-24", "2026-08-30")])
+        self.assertIsNotNone(job_id)
+        final = wait_until_done(runner)
+        self.assertFalse(final["running"], "running flag should be cleared after exception")
+        self.assertIsNotNone(final["error"], "error should be recorded")
+        self.assertEqual(len(final["stages"]), 1, "stage should be recorded despite error")
+        self.assertFalse(final["stages"][0]["ok"])
+        # Subsequent start should succeed (not refused)
+        job_id2, job2 = runner.start([("2026-08-24", "2026-08-30")])
+        self.assertIsNotNone(job_id2, "should accept new job after previous failed")
 
 
 if __name__ == "__main__":

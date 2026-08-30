@@ -37,10 +37,13 @@ class JobRunner:
         self._job = None
 
     def _snapshot(self):
-        """Caller must hold the lock. Copies the mutable stages list."""
+        """Caller must hold the lock. Deep copies the stages list and each stage's range."""
         if self._job is None:
             return {"running": False, "id": None}
-        return {**self._job, "stages": list(self._job["stages"])}
+        stages = [
+            {**stage, "range": list(stage["range"])} for stage in self._job["stages"]
+        ]
+        return {**self._job, "stages": stages}
 
     def status(self):
         with self._lock:
@@ -75,6 +78,9 @@ class JobRunner:
                 self._job["stage"] = index
 
             cmd = [self._python, self._sync_script, "--range", start, end]
+            ok = False
+            output = ""
+            error = None
             try:
                 result = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=self._timeout
@@ -83,8 +89,9 @@ class JobRunner:
                 output = result.stdout.strip()
                 error = result.stderr.strip() or output
             except subprocess.TimeoutExpired:
-                ok, output = False, ""
                 error = f"Stage {index} timed out after {self._timeout}s"
+            except Exception as e:
+                error = f"Stage {index} failed: {type(e).__name__}: {e}"
 
             with self._lock:
                 if self._job is None or self._job["id"] != job_id:
