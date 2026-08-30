@@ -35,17 +35,26 @@ class ConnectTest(unittest.TestCase):
     def test_reader_is_not_blocked_by_an_open_writer(self):
         writer = db.connect(self.path)
         self.addCleanup(writer.close)
-        reader = db.connect(self.path)
+        reader = db.connect(self.path, isolation_level=None)
         self.addCleanup(reader.close)
+
+        # Reader holds an open transaction spanning the writer's commit
+        reader.execute("BEGIN")
+        reader.execute("SELECT v FROM t").fetchall()
 
         writer.execute("BEGIN IMMEDIATE")
         writer.execute("INSERT INTO t (v) VALUES ('during')")
 
-        # WAL lets the reader see the pre-write snapshot instead of erroring.
+        # WAL allows the writer to commit even while reader holds SHARED lock.
+        # Under DELETE mode, this would raise "database is locked" because the
+        # writer needs EXCLUSIVE lock at commit but reader holds SHARED.
+        writer.commit()
+
+        # Reader sees the pre-commit snapshot due to WAL isolation.
         rows = reader.execute("SELECT v FROM t").fetchall()
         self.assertEqual(rows, [("before",)])
 
-        writer.commit()
+        reader.commit()
         self.assertEqual(len(reader.execute("SELECT v FROM t").fetchall()), 2)
 
 
