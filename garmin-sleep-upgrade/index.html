@@ -226,6 +226,25 @@ function GarminSleepAnalyzer() {
     setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
   };
 
+  const [historyYears, setHistoryYears] = useState('2');
+
+  const loadMoreHistory = async () => {
+    const today = new Date();
+    const end = new Date(today);
+    end.setDate(end.getDate() - 365);                       // where the chain stopped
+    const start = new Date(today);
+    start.setFullYear(start.getFullYear() - parseInt(historyYears, 10));
+    const iso = (d) => d.toISOString().slice(0, 10);
+
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start: iso(start), end: iso(end) }),
+    });
+    const body = await res.json();
+    setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
+  };
+
   const syncLatest = async () => {
     const today = new Date();
     const start = new Date(today);
@@ -1091,6 +1110,25 @@ function GarminSleepAnalyzer() {
               >
                 Sync stopped: {syncJob.error} ×
               </button>
+            )}
+            {!syncJob?.running && (
+              <span className="ml-3 inline-flex items-center gap-2 text-xs">
+                <select
+                  value={historyYears}
+                  onChange={(e) => setHistoryYears(e.target.value)}
+                  className="px-2 py-1 bg-gray-700 text-gray-200 rounded border border-gray-600"
+                >
+                  <option value="2">2 years</option>
+                  <option value="3">3 years</option>
+                  <option value="5">5 years</option>
+                </select>
+                <button
+                  onClick={loadMoreHistory}
+                  className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded"
+                >
+                  Load more history
+                </button>
+              </span>
             )}
           </div>
           <div className="flex items-center gap-3">
