@@ -79,11 +79,17 @@ function GarminSleepAnalyzer() {
       setSavedFiles(JSON.parse(saved));
     }
     fetch('/api/auth/status').then(r => r.json())
-      .then(d => {
-        setAuthStatus(d.authenticated);
-        // Auto-load from DB if server is available
-        return fetch('/api/sleep');
-      })
+      .then(d => setAuthStatus(d.authenticated))
+      .catch(() => setAuthStatus(null));
+
+    // Separate chain so a /api/sleep failure can never land in the auth
+    // fetch's .catch above and reset authStatus to null -- that shared
+    // .catch previously hid the login form and sync progress behind
+    // "Requires server.py -- run it and reload." whenever /api/sleep
+    // failed (e.g. db.connect() hitting lock contention during the
+    // first sync) even though the server was up and auth had already
+    // succeeded.
+    fetch('/api/sleep')
       .then(r => r.ok ? r.json() : null)
       .then(records => {
         if (!records || records.length === 0) return;
@@ -97,7 +103,7 @@ function GarminSleepAnalyzer() {
         setCurrentFileName(dateRangeStr);
         setLoadInfo({ filesLoaded: 1, fileNames: ['Garmy DB'], uniqueNights: deduped.length, duplicatesRemoved: 0, dateRange: dateRangeStr });
       })
-      .catch(() => setAuthStatus(null));
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
