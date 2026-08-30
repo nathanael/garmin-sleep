@@ -35,7 +35,9 @@ SELECT
     hrv_last_night_avg AS hrvOvernight,
     hrv_weekly_avg AS hrvWeeklyAvg,
     hrv_status AS hrvStatus,
-    resting_heart_rate AS restingHr
+    resting_heart_rate AS restingHr,
+    body_battery_high AS bodyBatteryHigh,
+    sleep_need_minutes AS sleepNeedMinutes
 FROM daily_health_metrics
 WHERE user_id = 1
   AND (deep_sleep_hours IS NOT NULL OR light_sleep_hours IS NOT NULL OR rem_sleep_hours IS NOT NULL)
@@ -60,6 +62,16 @@ def read_body(handler):
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(Path(__file__).resolve().parent), **kwargs)
+
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -87,6 +99,11 @@ class Handler(SimpleHTTPRequestHandler):
     # --- Auth endpoints ---
 
     def serve_auth_status(self):
+        if not auth.is_authenticated and auth.needs_refresh:
+            try:
+                auth.refresh_tokens()
+            except Exception:
+                pass
         json_response(self, {"authenticated": auth.is_authenticated})
 
     def serve_auth_login(self):
@@ -130,10 +147,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def serve_sync_api(self):
         body = read_body(self)
+        start_date = body.get("start")
+        end_date = body.get("end")
         days = body.get("days", 7)
 
         python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
-        cmd = [python, str(SYNC_SCRIPT), str(days)]
+        if start_date and end_date:
+            cmd = [python, str(SYNC_SCRIPT), "--range", start_date, end_date]
+        else:
+            cmd = [python, str(SYNC_SCRIPT), str(days)]
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)

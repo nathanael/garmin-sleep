@@ -261,6 +261,7 @@ export default function GarminSleepAnalyzer() {
     const spo2Avg = getValues(d => d.spo2SleepSummary?.averageSPO2);
     const spo2Low = getValues(d => d.spo2SleepSummary?.lowestSPO2);
     const stress = getValues(d => d.avgSleepStress);
+    const bodyBattery = getValues(d => d.bodyBatteryHigh);
 
     const sorted = [...validData].sort((a, b) => new Date(a.calendarDate) - new Date(b.calendarDate));
 
@@ -276,7 +277,8 @@ export default function GarminSleepAnalyzer() {
       respLow: d.lowestRespiration,
       spo2: d.spo2SleepSummary?.averageSPO2,
       spo2Low: d.spo2SleepSummary?.lowestSPO2,
-      stress: d.avgSleepStress
+      stress: d.avgSleepStress,
+      bodyBattery: d.bodyBatteryHigh
     }));
 
     const withRolling = timeSeries.map((d, i) => {
@@ -285,12 +287,14 @@ export default function GarminSleepAnalyzer() {
       const deepVals = window.map(w => w.deep).filter(v => v != null);
       const scoreVals = window.map(w => w.score).filter(v => v != null);
       const respVals = window.map(w => w.respiration).filter(v => v != null);
+      const bbVals = window.map(w => w.bodyBattery).filter(v => v != null);
       return {
         ...d,
         remRolling: remVals.length ? remVals.reduce((a,b) => a+b, 0) / remVals.length : null,
         deepRolling: deepVals.length ? deepVals.reduce((a,b) => a+b, 0) / deepVals.length : null,
         scoreRolling: scoreVals.length ? scoreVals.reduce((a,b) => a+b, 0) / scoreVals.length : null,
         respRolling: respVals.length ? respVals.reduce((a,b) => a+b, 0) / respVals.length : null,
+        bodyBatteryRolling: bbVals.length ? bbVals.reduce((a,b) => a+b, 0) / bbVals.length : null,
       };
     });
 
@@ -303,6 +307,7 @@ export default function GarminSleepAnalyzer() {
       respiration: { avg: avg(respAvg), lowestAvg: avg(respLow), lowestMin: min(respLow) },
       spo2: { avg: avg(spo2Avg), lowestAvg: avg(spo2Low), lowestMin: min(spo2Low) },
       stress: { avg: avg(stress), min: min(stress), max: max(stress) },
+      bodyBattery: { avg: avg(bodyBattery), min: min(bodyBattery), max: max(bodyBattery) },
       timeSeries: withRolling
     };
   };
@@ -363,6 +368,7 @@ export default function GarminSleepAnalyzer() {
         spo2: avg(days, 'spo2'),
         spo2Low: avg(days, 'spo2Low'),
         stress: avg(days, 'stress'),
+        bodyBattery: avg(days, 'bodyBattery'),
       };
     });
     
@@ -391,6 +397,7 @@ export default function GarminSleepAnalyzer() {
         stressRolling: rollingAvg('stress'),
         spo2Rolling: rollingAvg('spo2'),
         spo2LowRolling: rollingAvg('spo2Low'),
+        bodyBatteryRolling: rollingAvg('bodyBattery'),
       };
     });
   }, [stats?.timeSeries, viewMode]);
@@ -449,6 +456,7 @@ export default function GarminSleepAnalyzer() {
       respiration: { first: avg(firstHalf, 'respiration'), second: avg(secondHalf, 'respiration') },
       spo2Low: { first: avg(firstHalf, 'spo2Low'), second: avg(secondHalf, 'spo2Low') },
       stress: { first: avg(firstHalf, 'stress'), second: avg(secondHalf, 'stress') },
+      bodyBattery: { first: avg(firstHalf, 'bodyBattery'), second: avg(secondHalf, 'bodyBattery') },
     };
   }, [stats?.timeSeries]);
 
@@ -470,7 +478,8 @@ export default function GarminSleepAnalyzer() {
     score: { title: 'Sleep Score', dataKey: 'score', rollingKey: 'scoreRolling', color: '#10b981', unit: '', refLine: 80, refLabel: 'Good', domain: ['auto', 'auto'] },
     respiration: { title: 'Respiration Rate', dataKey: 'respiration', rollingKey: 'respRolling', color: '#f59e0b', unit: 'brpm', refLine: 14, refLabel: 'Normal', domain: ['auto', 'auto'] },
     stress: { title: 'Sleep Stress', dataKey: 'stress', rollingKey: 'stressRolling', color: '#ef4444', unit: '', refLine: 20, refLabel: 'Low', domain: ['auto', 'auto'] },
-    spo2: { title: 'SpO2 (Lowest)', dataKey: 'spo2Low', rollingKey: 'spo2LowRolling', color: '#06b6d4', unit: '%', refLine: 92, refLabel: 'Concern <92%', domain: [85, 100] }
+    spo2: { title: 'SpO2 (Lowest)', dataKey: 'spo2Low', rollingKey: 'spo2LowRolling', color: '#06b6d4', unit: '%', refLine: 92, refLabel: 'Concern <92%', domain: [85, 100] },
+    bodyBattery: { title: 'Body Battery (High)', dataKey: 'bodyBattery', rollingKey: 'bodyBatteryRolling', color: '#22c55e', unit: '', refLine: 75, refLabel: 'Good', domain: [0, 100] }
   };
 
   const currentChart = chartConfigs[activeChart];
@@ -1423,12 +1432,9 @@ export default function GarminSleepAnalyzer() {
                     <Tooltip 
                       contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} 
                       labelStyle={{ color: '#9ca3af' }}
-                      formatter={(value, name) => {
+                      formatter={(value, name, entry) => {
                         if (value == null) return ['-', name];
-                        const rounded = name.includes('Rolling') || name.includes('avg') 
-                          ? value.toFixed(1) 
-                          : Math.round(value);
-                        return [rounded, name.replace('Rolling', ' trend')];
+                        return [Math.round(value), name];
                       }}
                       labelFormatter={(label, payload) => {
                         if (payload?.[0]?.payload) {
@@ -1446,7 +1452,7 @@ export default function GarminSleepAnalyzer() {
                     <ReferenceLine y={currentChart.refLine} stroke="#6b7280" strokeDasharray="5 5" label={{ value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 }} />
                     <Bar dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} />
                     {currentChart.rollingKey && (
-                      <Line type="monotone" dataKey={currentChart.rollingKey} stroke={currentChart.color} strokeWidth={2} dot={false} name={viewMode === 'days' ? '7-day avg' : '3-period avg'} />
+                      <Line type="monotone" dataKey={currentChart.rollingKey} stroke={currentChart.color} strokeWidth={2} dot={false} name={viewMode === 'days' ? '7-day avg' : '3-period avg'} tooltipType="none" />
                     )}
                   </ComposedChart>
                 </ResponsiveContainer>

@@ -16,11 +16,13 @@
   <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
   <script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
   
-  <!-- Babel for JSX -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Babel for JSX (pinned to a version that defaults to classic runtime; latest uses automatic which emits `import`) -->
+  <script src="https://unpkg.com/@babel/standalone@7.17.12/babel.min.js"></script>
   
   <style>
     body { margin: 0; padding: 0; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes sync-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); } 50% { box-shadow: 0 0 12px 2px rgba(59, 130, 246, 0.3); } }
   </style>
 </head>
 <body>
@@ -67,6 +69,8 @@ function GarminSleepAnalyzer() {
   const [activePreset, setActivePreset] = useState(null);
   const [editingPeriod, setEditingPeriod] = useState(null);
   const [dragPeriod, setDragPeriod] = useState({ dragging: false, startX: 0, startDate: '', currentDate: '' });
+  const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [showRangeMenu, setShowRangeMenu] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('garmin_saved_files');
@@ -425,6 +429,8 @@ function GarminSleepAnalyzer() {
     const spo2Low = getValues(d => d.spo2SleepSummary?.lowestSPO2);
     const stress = getValues(d => d.avgSleepStress);
     const hrvOvernight = getValues(d => d.hrvOvernight);
+    const bodyBattery = getValues(d => d.bodyBatteryHigh);
+    const sleepNeed = getValues(d => d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null);
 
     const sorted = [...validData].sort((a, b) => new Date(a.calendarDate) - new Date(b.calendarDate));
 
@@ -432,7 +438,7 @@ function GarminSleepAnalyzer() {
       date: d.calendarDate,
       shortDate: d.calendarDate.slice(5),
       score: d.sleepScores?.overallScore,
-      duration: ((d.deepSleepSeconds || 0) + (d.lightSleepSeconds || 0) + (d.remSleepSeconds || 0) + (d.awakeSleepSeconds || 0)) / 3600,
+      duration: ((d.deepSleepSeconds || 0) + (d.lightSleepSeconds || 0) + (d.remSleepSeconds || 0)) / 3600,
       rem: d.remSleepSeconds ? d.remSleepSeconds / 60 : null,
       deep: d.deepSleepSeconds ? d.deepSleepSeconds / 60 : null,
       light: d.lightSleepSeconds ? d.lightSleepSeconds / 60 : null,
@@ -442,7 +448,9 @@ function GarminSleepAnalyzer() {
       spo2Low: d.spo2SleepSummary?.lowestSPO2,
       stress: d.avgSleepStress,
       hrv: d.hrvOvernight,
-      restingHr: d.restingHr
+      restingHr: d.restingHr,
+      bodyBattery: d.bodyBatteryHigh,
+      sleepNeed: d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null
     }));
 
     const withRolling = timeSeries.map((d, i) => {
@@ -453,6 +461,7 @@ function GarminSleepAnalyzer() {
       const durationVals = window.map(w => w.duration).filter(v => v != null);
       const respVals = window.map(w => w.respiration).filter(v => v != null);
       const hrvVals = window.map(w => w.hrv).filter(v => v != null);
+      const bbVals = window.map(w => w.bodyBattery).filter(v => v != null);
       return {
         ...d,
         remRolling: remVals.length ? remVals.reduce((a,b) => a+b, 0) / remVals.length : null,
@@ -461,6 +470,7 @@ function GarminSleepAnalyzer() {
         durationRolling: durationVals.length ? durationVals.reduce((a,b) => a+b, 0) / durationVals.length : null,
         respRolling: respVals.length ? respVals.reduce((a,b) => a+b, 0) / respVals.length : null,
         hrvRolling: hrvVals.length ? hrvVals.reduce((a,b) => a+b, 0) / hrvVals.length : null,
+        bodyBatteryRolling: bbVals.length ? bbVals.reduce((a,b) => a+b, 0) / bbVals.length : null,
       };
     });
 
@@ -474,6 +484,7 @@ function GarminSleepAnalyzer() {
       spo2: { avg: avg(spo2Avg), lowestAvg: avg(spo2Low), lowestMin: min(spo2Low) },
       stress: { avg: avg(stress), min: min(stress), max: max(stress) },
       hrv: { avg: avg(hrvOvernight), min: min(hrvOvernight), max: max(hrvOvernight) },
+      bodyBattery: { avg: avg(bodyBattery), min: min(bodyBattery), max: max(bodyBattery) },
       timeSeries: withRolling
     };
   };
@@ -532,6 +543,8 @@ function GarminSleepAnalyzer() {
         stress: avg(days, 'stress'),
         hrv: avg(days, 'hrv'),
         restingHr: avg(days, 'restingHr'),
+        bodyBattery: avg(days, 'bodyBattery'),
+        sleepNeed: avg(days, 'sleepNeed'),
       };
     });
     
@@ -559,6 +572,7 @@ function GarminSleepAnalyzer() {
         spo2Rolling: rollingAvg('spo2'),
         spo2LowRolling: rollingAvg('spo2Low'),
         hrvRolling: rollingAvg('hrv'),
+        bodyBatteryRolling: rollingAvg('bodyBattery'),
       };
     });
   }, [stats?.timeSeries, viewMode]);
@@ -623,6 +637,7 @@ function GarminSleepAnalyzer() {
       spo2Low: regTrend('spo2Low'),
       stress: regTrend('stress'),
       hrv: regTrend('hrv'),
+      bodyBattery: regTrend('bodyBattery'),
     };
   }, [stats?.timeSeries]);
 
@@ -640,7 +655,8 @@ function GarminSleepAnalyzer() {
     respiration: { title: 'Respiration Rate', dataKey: 'respiration', rollingKey: 'respRolling', color: '#f59e0b', unit: 'brpm', refLine: 14, refLabel: 'Normal', domain: ['auto', 'auto'] },
     stress: { title: 'Sleep Stress', dataKey: 'stress', rollingKey: 'stressRolling', color: '#ef4444', unit: '', refLine: 20, refLabel: 'Low', domain: ['auto', 'auto'] },
     spo2: { title: 'SpO2 (Lowest)', dataKey: 'spo2Low', rollingKey: 'spo2LowRolling', color: '#06b6d4', unit: '%', refLine: 92, refLabel: 'Concern <92%', domain: [85, 100] },
-    hrv: { title: 'HRV (Overnight)', dataKey: 'hrv', rollingKey: 'hrvRolling', color: '#a78bfa', unit: 'ms', refLine: null, refLabel: null, domain: ['auto', 'auto'] }
+    hrv: { title: 'HRV (Overnight)', dataKey: 'hrv', rollingKey: 'hrvRolling', color: '#a78bfa', unit: 'ms', refLine: null, refLabel: null, domain: ['auto', 'auto'] },
+    bodyBattery: { title: 'Body Battery', dataKey: 'bodyBattery', rollingKey: 'bodyBatteryRolling', color: '#22c55e', unit: '', refLine: 75, refLabel: 'Good', domain: [0, 100] }
   };
 
   const currentChart = chartConfigs[activeChart];
@@ -666,14 +682,174 @@ function GarminSleepAnalyzer() {
     const currentKey = chartConfigs[activeChart]?.dataKey;
     if (!currentKey) return aggregatedTimeSeries;
     const reg = linReg(aggregatedTimeSeries, currentKey);
-    if (!reg) return aggregatedTimeSeries;
-    return aggregatedTimeSeries.map((d, i) => ({
-      ...d,
-      trend: reg.intercept + reg.slope * i,
-    }));
+    return aggregatedTimeSeries.map((d, i) => {
+      const base = {
+        ...d,
+        trend: reg ? reg.intercept + reg.slope * i : undefined,
+      };
+      if (activeChart === 'duration' && d.sleepNeed != null && d.duration != null) {
+        const met = d.duration >= d.sleepNeed;
+        base.durationMet = met ? d.duration : 0;
+        base.durationUnmet = met ? 0 : d.duration;
+        base.needGap = met ? 0 : d.sleepNeed - d.duration;
+      }
+      return base;
+    });
   }, [aggregatedTimeSeries, activeChart]);
 
   const formatNum = (val, decimals = 1) => val != null ? val.toFixed(decimals) : '-';
+
+  const fmtHM = (hours) => {
+    if (hours == null || isNaN(hours)) return '-';
+    const h = Math.floor(Math.abs(hours));
+    const m = Math.round((Math.abs(hours) - h) * 60);
+    return `${hours < 0 ? '-' : ''}${h}h ${m}m`;
+  };
+
+  const qualify = (metric, value) => {
+    if (value == null || isNaN(value)) return { color: '#4b5563', label: '—' };
+    const thresholds = {
+      score:    [[80, '#10b981', 'GOOD'], [60, '#eab308', 'FAIR'], [0, '#ef4444', 'POOR']],
+      duration: [[7.5, '#10b981', 'GOOD'], [6.5, '#eab308', 'FAIR'], [0, '#ef4444', 'LOW']],
+      rem:      [[90, '#10b981', 'GOOD'], [60, '#eab308', 'FAIR'], [0, '#ef4444', 'LOW']],
+      deep:     [[70, '#10b981', 'GOOD'], [45, '#eab308', 'FAIR'], [0, '#ef4444', 'LOW']],
+      hrv:      [[45, '#10b981', 'HIGH'], [30, '#eab308', 'OK'],   [0, '#ef4444', 'LOW']],
+      rhr:      [[0, '#10b981', 'GOOD'],  [60, '#eab308', 'OK'],   [70, '#ef4444', 'HIGH']],
+      resp:     [[0, '#eab308', 'LOW'],   [12, '#10b981', 'GOOD'], [18, '#eab308', 'HIGH'], [22, '#ef4444', 'HIGH']],
+      spo2:     [[95, '#10b981', 'GOOD'], [92, '#eab308', 'FAIR'], [0, '#ef4444', 'LOW']],
+    };
+    const rules = thresholds[metric];
+    if (!rules) return { color: '#4b5563', label: '—' };
+    if (metric === 'rhr' || metric === 'resp') {
+      let last = rules[0];
+      for (const r of rules) if (value >= r[0]) last = r;
+      return { color: last[1], label: last[2] };
+    }
+    for (const [t, color, label] of rules) if (value >= t) return { color, label };
+    return { color: '#ef4444', label: 'LOW' };
+  };
+
+  const Donut = ({ value, max, color, size = 68, stroke = 8, label, unit, qualifier }) => {
+    const pct = value == null || max == null ? 0 : Math.max(0, Math.min(1, value / max));
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const cx = size / 2;
+    return (
+      <div className="flex flex-col items-center gap-1">
+        <div className="relative" style={{ width: size, height: size }}>
+          <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+            <circle cx={cx} cy={cx} r={r} fill="none" stroke="#374151" strokeWidth={stroke} />
+            <circle cx={cx} cy={cx} r={r} fill="none" stroke={color} strokeWidth={stroke}
+              strokeDasharray={`${c * pct} ${c}`} strokeLinecap="round" />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-sm font-bold text-white leading-none">{value == null ? '—' : (typeof value === 'number' ? (value >= 100 ? value.toFixed(0) : value.toFixed(value < 10 ? 1 : 0)) : value)}</div>
+            {unit && <div className="text-[9px] text-gray-500 leading-none mt-0.5">{unit}</div>}
+          </div>
+        </div>
+        <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
+        {qualifier && <div className="text-[9px] font-semibold" style={{ color }}>{qualifier}</div>}
+      </div>
+    );
+  };
+
+  const copyForAI = (days) => {
+    if (!sleepData.length) return;
+    const sorted = [...sleepData].sort((a, b) => new Date(a.calendarDate) - new Date(b.calendarDate));
+    const maxDate = sorted[sorted.length - 1].calendarDate;
+    let subset = sorted;
+    let rangeLabel = 'all time';
+    if (days) {
+      const cutoff = new Date(maxDate);
+      cutoff.setDate(cutoff.getDate() - days + 1);
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      subset = sorted.filter(d => d.calendarDate >= cutoffStr);
+      const months = Math.round(days / 30);
+      rangeLabel = months <= 1 ? 'last month' : months < 12 ? `last ${months} months` : 'last 12 months';
+    }
+    if (!subset.length) return;
+
+    const nights = subset.map(d => ({
+      date: d.calendarDate,
+      score: d.sleepScores?.overallScore,
+      duration: ((d.deepSleepSeconds || 0) + (d.lightSleepSeconds || 0) + (d.remSleepSeconds || 0)) / 3600,
+      awake: (d.awakeSleepSeconds || 0) / 60,
+      rem: d.remSleepSeconds ? d.remSleepSeconds / 60 : null,
+      deep: d.deepSleepSeconds ? d.deepSleepSeconds / 60 : null,
+      light: d.lightSleepSeconds ? d.lightSleepSeconds / 60 : null,
+      resp: d.averageRespiration,
+      respLow: d.lowestRespiration,
+      spo2: d.spo2SleepSummary?.averageSPO2,
+      spo2Low: d.spo2SleepSummary?.lowestSPO2,
+      stress: d.avgSleepStress,
+      hrv: d.hrvOvernight,
+      hrvWeekly: d.hrvWeeklyAvg,
+      hrvStatus: d.hrvStatus,
+      rhr: d.restingHr,
+      bb: d.bodyBatteryHigh,
+      sleepNeed: d.sleepNeedMinutes,
+    }));
+
+    const mean = (arr) => {
+      const vals = arr.filter(v => v != null);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    };
+    const num = (v, d = 1) => v == null ? '-' : Number(v).toFixed(d);
+
+    const summary = {
+      nights: nights.length,
+      score: mean(nights.map(n => n.score)),
+      duration: mean(nights.map(n => n.duration)),
+      rem: mean(nights.map(n => n.rem)),
+      deep: mean(nights.map(n => n.deep)),
+      light: mean(nights.map(n => n.light)),
+      awake: mean(nights.map(n => n.awake)),
+      resp: mean(nights.map(n => n.resp)),
+      spo2: mean(nights.map(n => n.spo2)),
+      spo2Low: mean(nights.map(n => n.spo2Low)),
+      stress: mean(nights.map(n => n.stress)),
+      hrv: mean(nights.map(n => n.hrv)),
+      rhr: mean(nights.map(n => n.rhr)),
+      bb: mean(nights.map(n => n.bb)),
+    };
+
+    const header = '| Date | Score | Dur(h) | REM(m) | Deep(m) | Light(m) | Awake(m) | Resp | SpO2 | SpO2 low | Stress | HRV | RHR | BB high |';
+    const sep = '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|';
+    const rows = nights.map(n => `| ${n.date} | ${num(n.score, 0)} | ${num(n.duration)} | ${num(n.rem, 0)} | ${num(n.deep, 0)} | ${num(n.light, 0)} | ${num(n.awake, 0)} | ${num(n.resp)} | ${num(n.spo2)} | ${num(n.spo2Low, 0)} | ${num(n.stress)} | ${num(n.hrv, 0)} | ${num(n.rhr, 0)} | ${num(n.bb, 0)} |`);
+
+    const firstDate = subset[0].calendarDate;
+    const lastDate = subset[subset.length - 1].calendarDate;
+
+    const prompt = [
+      `I'm sharing my Garmin sleep data (${rangeLabel}: ${firstDate} to ${lastDate}, ${nights.length} nights).`,
+      '',
+      'Please analyze trends, flag anything concerning, and suggest what to focus on. Highlight patterns in REM/deep sleep, HRV, respiration, and recovery.',
+      '',
+      '## Averages',
+      `- Sleep score: ${num(summary.score, 0)}`,
+      `- Duration: ${num(summary.duration)} h`,
+      `- REM: ${num(summary.rem, 0)} min`,
+      `- Deep: ${num(summary.deep, 0)} min`,
+      `- Light: ${num(summary.light, 0)} min`,
+      `- Awake: ${num(summary.awake, 0)} min`,
+      `- Avg respiration: ${num(summary.resp)} brpm`,
+      `- Avg SpO2: ${num(summary.spo2)}% (lowest avg ${num(summary.spo2Low, 0)}%)`,
+      `- Sleep stress: ${num(summary.stress)}`,
+      `- HRV overnight: ${num(summary.hrv, 0)} ms`,
+      `- Resting HR: ${num(summary.rhr, 0)} bpm`,
+      `- Body Battery high: ${num(summary.bb, 0)}`,
+      '',
+      '## Per-night data',
+      header,
+      sep,
+      ...rows,
+    ].join('\n');
+
+    navigator.clipboard.writeText(prompt);
+    setCopyToast(true);
+    setShowCopyMenu(false);
+    setTimeout(() => setCopyToast(false), 2000);
+  };
 
   const formatDiff = (val1, val2, decimals = 1, invert = false) => {
     if (val1 == null || val2 == null) return '-';
@@ -850,277 +1026,251 @@ function GarminSleepAnalyzer() {
           </div>
         </div>
         
-        {/* Collapsible Upload Section */}
-        <div className="mb-4">
-          <button
-            onClick={() => setUploadExpanded(!uploadExpanded)}
-            className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 mb-2"
-          >
-            <span className={`transition-transform ${uploadExpanded ? 'rotate-90' : ''}`}>▶</span>
-            <span>Data Management</span>
-            <span className="text-xs text-gray-500">({sleepData.length} nights loaded)</span>
-          </button>
-          
-          {uploadExpanded && (
-            <div className="flex flex-wrap gap-3 bg-gray-800/50 rounded-lg p-3">
-              {/* Drop Zone */}
-              <div
-                onDrop={handleDrop}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                className={`w-48 border-2 border-dashed rounded-lg p-3 text-center transition-colors ${
-                  dragOver ? 'border-blue-400 bg-blue-900/20' : mergeMode ? 'border-green-500 bg-green-900/20' : 'border-gray-600 hover:border-gray-500'
-                }`}
-              >
-                <p className="text-gray-400 text-xs">
-                  {mergeMode ? '➕ Drop to ADD' : 'Drop JSON files'}
-                </p>
-                {loadInfo && (
-                  <div className="text-xs mt-1">
-                    <span className="text-blue-400">{loadInfo.uniqueNights} nights</span>
-                    {loadInfo.rejected > 0 && <span className="text-red-400"> • {loadInfo.rejected} skipped</span>}
-                  </div>
-                )}
-                {sleepData.length > 0 && (
-                  <button
-                    onClick={() => setMergeMode(!mergeMode)}
-                    className={`mt-2 text-xs px-2 py-0.5 rounded ${
-                      mergeMode ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                  >
-                    {mergeMode ? 'Cancel' : '+ Add more'}
-                  </button>
-                )}
-                {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
-              </div>
-
-              {/* Garmy DB */}
-              <div className="flex flex-col gap-1 self-center">
-                <div className="flex items-center gap-1">
-                  <select
-                    value={garmyDays}
-                    onChange={(e) => setGarmyDays(e.target.value)}
-                    className="px-1 py-1.5 bg-gray-700 text-gray-200 rounded text-xs border border-gray-600"
-                  >
-                    <option value="">All</option>
-                    <option value="30">30d</option>
-                    <option value="90">90d</option>
-                    <option value="180">6mo</option>
-                    <option value="365">1yr</option>
-                  <option value="730">2yr</option>
-                  </select>
-                  <button
-                    onClick={loadFromGarmy}
-                    disabled={garmyLoading}
-                    className="px-3 py-1.5 bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:text-gray-400 text-white rounded text-xs font-medium transition-colors whitespace-nowrap"
-                  >
-                    {garmyLoading ? '...' : 'Garmy DB'}
-                  </button>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-gray-500">Sync:</span>
-                  {[30, 90, 180, 365, 730].map(d => (
-                    <button
-                      key={d}
-                      onClick={() => syncFromGarmin(d)}
-                      disabled={syncing}
-                      className="px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 text-gray-300 rounded text-[10px] transition-colors"
-                    >
-                      {d >= 365 ? `${d/365}yr` : d >= 180 ? `${d/30}mo` : `${d}d`}
-                    </button>
-                  ))}
-                  {syncing && <span className="text-[10px] text-yellow-400">syncing...</span>}
-                </div>
-              </div>
-
-              {/* Saved Files */}
-              <div className="bg-gray-800 rounded-lg p-3 flex-1 min-w-64">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-gray-400">Saved Datasets</span>
-                  {savedFiles.length > 0 && (
-                    <button 
-                      onClick={() => {
-                        savedFiles.forEach(f => localStorage.removeItem(`garmin_data_${f.name}`));
-                        localStorage.removeItem('garmin_saved_files');
-                        setSavedFiles([]);
-                      }}
-                      className="text-xs text-red-400 hover:text-red-300"
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                {savedFiles.length === 0 ? (
-                  <p className="text-xs text-gray-500">No saved datasets</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {savedFiles.map(f => (
-                      <div 
-                        key={f.name} 
-                        className={`flex items-center gap-2 text-xs rounded px-2 py-1 cursor-pointer ${
-                          currentFileName === f.dateRange 
-                            ? 'bg-blue-600 text-white' 
-                            : 'bg-gray-700 hover:bg-gray-600'
-                        }`}
-                        onClick={() => loadSavedFile(f.name)}
-                      >
-                        <span title={f.name}>{f.dateRange}</span>
-                        <span className="text-gray-400">({f.nightCount})</span>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteSavedFile(f.name);
-                          }}
-                          className="text-red-400 hover:text-red-300 ml-1"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
         {stats && availableDates.min && availableDates.max && (
           <div className="space-y-4">
-            {/* Unified Date Picker Bar */}
-            <div className="bg-gray-800 rounded-lg p-3">
+            {/* Last Night Hero - always the true latest night, unaffected by range controls */}
+            {(() => {
+              if (!sleepData.length) return null;
+              const sorted = [...sleepData].sort((a, b) => new Date(a.calendarDate) - new Date(b.calendarDate));
+              const nights = sorted.slice(-14).map(d => ({
+                date: d.calendarDate,
+                score: d.sleepScores?.overallScore,
+                duration: ((d.deepSleepSeconds || 0) + (d.lightSleepSeconds || 0) + (d.remSleepSeconds || 0)) / 3600,
+                rem: d.remSleepSeconds ? d.remSleepSeconds / 60 : null,
+                deep: d.deepSleepSeconds ? d.deepSleepSeconds / 60 : null,
+                hrv: d.hrvOvernight,
+                restingHr: d.restingHr,
+                respiration: d.averageRespiration,
+                spo2: d.spo2SleepSummary?.averageSPO2,
+                sleepNeed: d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null,
+              }));
+              const last = nights[nights.length - 1];
+              const baselineHrs = last.sleepNeed || nights.map(d => d.sleepNeed).filter(v => v != null).slice(-1)[0] || 7.83;
+              const debtHrs = nights.reduce((sum, d) => {
+                if (d.duration == null || d.sleepNeed == null) return sum;
+                return sum + Math.max(0, d.sleepNeed - d.duration);
+              }, 0);
+              const scoreQ = qualify('score', last.score);
+              return (
+                <div className="bg-gray-800 rounded-lg p-4">
+                  {/* Top row: hero score + sleep debt */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-4 border-b border-gray-700">
+                    {/* Whoop-style hero score */}
+                    <div className="flex items-center gap-4">
+                      <div className="relative" style={{ width: 120, height: 120 }}>
+                        <svg width={120} height={120} style={{ transform: 'rotate(-90deg)' }}>
+                          <circle cx={60} cy={60} r={52} fill="none" stroke="#374151" strokeWidth={12} />
+                          <circle cx={60} cy={60} r={52} fill="none" stroke={scoreQ.color} strokeWidth={12}
+                            strokeDasharray={`${2 * Math.PI * 52 * ((last.score || 0) / 100)} ${2 * Math.PI * 52}`}
+                            strokeLinecap="round" />
+                        </svg>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center">
+                          <div className="text-3xl font-bold text-white leading-none">{last.score != null ? Math.round(last.score) : '—'}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">/ 100</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase tracking-wide">Last night</div>
+                        <div className="text-lg font-bold" style={{ color: scoreQ.color }}>{scoreQ.label}</div>
+                        <div className="text-xs text-gray-400 mt-1">{last.date}</div>
+                        <div className="text-sm text-gray-300 mt-1">{fmtHM(last.duration)} <span className="text-gray-500">/ {fmtHM(baselineHrs)} need</span></div>
+                      </div>
+                    </div>
+                    {/* RISE-style sleep debt */}
+                    <div className="flex flex-col justify-center">
+                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Sleep debt (last 14 nights)</div>
+                      <div className={`text-3xl font-bold mb-2 ${debtHrs > 5 ? 'text-red-400' : debtHrs > 2 ? 'text-yellow-400' : 'text-green-400'}`}>{fmtHM(debtHrs)}</div>
+                      <div className="flex gap-1 h-7">
+                        {nights.map((d, i) => {
+                          if (d.duration == null || d.sleepNeed == null) {
+                            return <div key={i} className="flex-1 rounded-sm bg-gray-700/60" title={`${d.date}: no data`} />;
+                          }
+                          const ratio = d.duration / d.sleepNeed;
+                          const color = ratio >= 1 ? '#10b981' : ratio >= 0.85 ? '#eab308' : '#ef4444';
+                          return (
+                            <div key={i} className="flex-1 rounded-sm" style={{ backgroundColor: color }}
+                              title={`${d.date}: ${fmtHM(d.duration)} / ${fmtHM(d.sleepNeed)}`} />
+                          );
+                        })}
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-1">vs {fmtHM(baselineHrs)} baseline</div>
+                    </div>
+                  </div>
+                  {/* Oura-style contributor rings */}
+                  <div className="pt-4">
+                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-3">Last night contributors</div>
+                    <div className="flex flex-wrap gap-3 justify-around">
+                      <Donut value={last.score} max={100} label="Score" qualifier={qualify('score', last.score).label} color={qualify('score', last.score).color} />
+                      <Donut value={last.duration} max={9} label="Duration" unit="hrs" qualifier={qualify('duration', last.duration).label} color={qualify('duration', last.duration).color} />
+                      <Donut value={last.rem} max={120} label="REM" unit="min" qualifier={qualify('rem', last.rem).label} color={qualify('rem', last.rem).color} />
+                      <Donut value={last.deep} max={90} label="Deep" unit="min" qualifier={qualify('deep', last.deep).label} color={qualify('deep', last.deep).color} />
+                      <Donut value={last.hrv} max={60} label="HRV" unit="ms" qualifier={qualify('hrv', last.hrv).label} color={qualify('hrv', last.hrv).color} />
+                      <Donut value={last.restingHr} max={80} label="RHR" unit="bpm" qualifier={qualify('rhr', last.restingHr).label} color={qualify('rhr', last.restingHr).color} />
+                      <Donut value={last.respiration} max={25} label="Resp" unit="brpm" qualifier={qualify('resp', last.respiration).label} color={qualify('resp', last.respiration).color} />
+                      <Donut value={last.spo2} max={100} label="SpO2" unit="%" qualifier={qualify('spo2', last.spo2).label} color={qualify('spo2', last.spo2).color} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Unified card: controls header + everything they control */}
+            <div className="bg-gray-800 rounded-lg">
+              {/* Controls header */}
+              <div className="p-3 border-b border-gray-700">
               <div className="flex flex-wrap items-center gap-3">
+                {/* Date range stepper + dropdown */}
+                {(() => {
+                  const fmtDay = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  const startYear = dateRange.start.slice(0, 4);
+                  const endYear = dateRange.end.slice(0, 4);
+                  const rangeLabel = startYear === endYear
+                    ? `${fmtDay(dateRange.start)} – ${fmtDay(dateRange.end)}, ${endYear}`
+                    : `${fmtDay(dateRange.start)}, ${startYear} – ${fmtDay(dateRange.end)}, ${endYear}`;
+
+                  const applyPreset = (days, label) => {
+                    const end = new Date(availableDates.max);
+                    const start = new Date(end);
+                    start.setDate(start.getDate() - days + 1);
+                    const startStr = start.toISOString().split('T')[0];
+                    setDateRange({ start: startStr, end: availableDates.max });
+                    setActivePreset(label);
+                    if (compareMode) {
+                      const p1End = new Date(start);
+                      p1End.setDate(p1End.getDate() - 1);
+                      const p1Start = new Date(p1End);
+                      p1Start.setDate(p1Start.getDate() - days + 1);
+                      setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
+                      setPeriod2({ start: startStr, end: availableDates.max });
+                      setCompareType('previous');
+                    }
+                    setShowRangeMenu(false);
+                  };
+
+                  const applyAll = () => {
+                    setDateRange({ start: availableDates.min, end: availableDates.max });
+                    setActivePreset('all');
+                    if (compareMode) {
+                      const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000 * 60 * 60 * 24));
+                      const midDate = new Date(availableDates.min);
+                      midDate.setDate(midDate.getDate() + Math.floor(totalDays / 2));
+                      const midStr = midDate.toISOString().split('T')[0];
+                      const midMinus1 = new Date(midDate);
+                      midMinus1.setDate(midMinus1.getDate() - 1);
+                      setPeriod1({ start: availableDates.min, end: midMinus1.toISOString().split('T')[0] });
+                      setPeriod2({ start: midStr, end: availableDates.max });
+                      setCompareType('custom');
+                    }
+                    setShowRangeMenu(false);
+                  };
+
+                  const stepPeriod = (dir) => {
+                    const daysDiff = Math.round((new Date(dateRange.end) - new Date(dateRange.start)) / (1000 * 60 * 60 * 24)) + 1;
+                    let newStart, newEnd;
+                    if (dir < 0) {
+                      newEnd = new Date(dateRange.start);
+                      newEnd.setDate(newEnd.getDate() - 1);
+                      newStart = new Date(newEnd);
+                      newStart.setDate(newStart.getDate() - daysDiff + 1);
+                      if (newStart < new Date(availableDates.min)) return;
+                    } else {
+                      newStart = new Date(dateRange.end);
+                      newStart.setDate(newStart.getDate() + 1);
+                      newEnd = new Date(newStart);
+                      newEnd.setDate(newEnd.getDate() + daysDiff - 1);
+                      if (newEnd > new Date(availableDates.max)) return;
+                    }
+                    setDateRange({
+                      start: newStart.toISOString().split('T')[0],
+                      end: newEnd.toISOString().split('T')[0]
+                    });
+                    setActivePreset(null);
+                  };
+
+                  const presets = [
+                    { label: '7d', days: 7, name: 'Last 7 days' },
+                    { label: '14d', days: 14, name: 'Last 14 days' },
+                    { label: '30d', days: 30, name: 'Last 30 days' },
+                    { label: '3mo', days: 90, name: 'Last 3 months' },
+                    { label: '6mo', days: 180, name: 'Last 6 months' },
+                    { label: '1y', days: 365, name: 'Last year' },
+                  ];
+
+                  return (
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => stepPeriod(-1)}
+                        className="h-8 px-2 flex items-center bg-gray-700 hover:bg-gray-600 rounded-l text-gray-300 text-sm border-r border-gray-800"
+                        title="Previous period"
+                      >
+                        ‹
+                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowRangeMenu(!showRangeMenu)}
+                          className="h-8 flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-3 text-sm"
+                        >
+                          <span className="font-medium">{rangeLabel}</span>
+                          <span className="text-gray-400 text-xs">{stats.totalNights} nights</span>
+                          <span className="text-gray-500 text-[10px]">▾</span>
+                        </button>
+                        {showRangeMenu && (
+                          <div className="absolute left-0 mt-1 w-44 bg-gray-800 border border-gray-700 rounded shadow-lg z-50 py-1">
+                            {presets.map(p => (
+                              <button
+                                key={p.label}
+                                onClick={() => applyPreset(p.days, p.label)}
+                                className={`w-full flex items-center justify-between px-3 py-1.5 text-xs text-left hover:bg-gray-700 ${
+                                  activePreset === p.label ? 'text-blue-400' : 'text-gray-300'
+                                }`}
+                              >
+                                <span>{p.name}</span>
+                                {activePreset === p.label && <span>✓</span>}
+                              </button>
+                            ))}
+                            <button
+                              onClick={applyAll}
+                              className={`w-full flex items-center justify-between px-3 py-1.5 text-xs text-left hover:bg-gray-700 ${
+                                activePreset === 'all' ? 'text-blue-400' : 'text-gray-300'
+                              }`}
+                            >
+                              <span>All time</span>
+                              {activePreset === 'all' && <span>✓</span>}
+                            </button>
+                            <div className="border-t border-gray-700 my-1"></div>
+                            <button
+                              onClick={() => { setShowRangeMenu(false); setShowDatePicker(true); }}
+                              className="w-full px-3 py-1.5 text-xs text-left text-gray-300 hover:bg-gray-700"
+                            >
+                              Custom range…
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => stepPeriod(1)}
+                        className="h-8 px-2 flex items-center bg-gray-700 hover:bg-gray-600 rounded-r text-gray-300 text-sm border-l border-gray-800"
+                        title="Next period"
+                      >
+                        ›
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* View Mode Toggle */}
                 <div className="flex bg-gray-700 rounded overflow-hidden">
                   {['days', 'weeks', 'months'].map(mode => (
                     <button
                       key={mode}
                       onClick={() => setViewMode(mode)}
-                      className={`px-3 py-1.5 text-xs capitalize ${
+                      className={`h-8 px-3 flex items-center text-xs capitalize ${
                         viewMode === mode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-600'
                       }`}
                     >
                       {mode}
                     </button>
                   ))}
-                </div>
-
-                {/* Main Date Range Button */}
-                <button
-                  onClick={() => setShowDatePicker(true)}
-                  className="flex items-center gap-2 bg-gray-700 hover:bg-gray-600 rounded px-3 py-1.5 text-sm"
-                >
-                  <span className="text-blue-400">📅</span>
-                  <span>{dateRange.start}</span>
-                  <span className="text-gray-500">→</span>
-                  <span>{dateRange.end}</span>
-                  <span className="text-gray-400 text-xs">({stats.totalNights} nights)</span>
-                  <span className="text-gray-500">▼</span>
-                </button>
-
-                {/* Quick Presets */}
-                <div className="flex items-center gap-1">
-                  {[
-                    { label: '7d', days: 7 },
-                    { label: '14d', days: 14 },
-                    { label: '30d', days: 30 },
-                    { label: '3mo', days: 90 },
-                    { label: '6mo', days: 180 },
-                    { label: '1y', days: 365 },
-                  ].map(preset => {
-                    return (
-                      <button
-                        key={preset.label}
-                        onClick={() => {
-                          const end = new Date(availableDates.max);
-                          const start = new Date(end);
-                          start.setDate(start.getDate() - preset.days + 1);
-                          const startStr = start.toISOString().split('T')[0];
-                          setDateRange({ start: startStr, end: availableDates.max });
-                          setActivePreset(preset.label);
-                          if (compareMode) {
-                            const p1End = new Date(start);
-                            p1End.setDate(p1End.getDate() - 1);
-                            const p1Start = new Date(p1End);
-                            p1Start.setDate(p1Start.getDate() - preset.days + 1);
-                            setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
-                            setPeriod2({ start: startStr, end: availableDates.max });
-                            setCompareType('previous');
-                          }
-                        }}
-                        className={`px-2 py-1 text-xs rounded transition-colors ${
-                          activePreset === preset.label ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => {
-                      setDateRange({ start: availableDates.min, end: availableDates.max });
-                      setActivePreset('all');
-                      if (compareMode) {
-                        const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000 * 60 * 60 * 24));
-                        const midDate = new Date(availableDates.min);
-                        midDate.setDate(midDate.getDate() + Math.floor(totalDays / 2));
-                        const midStr = midDate.toISOString().split('T')[0];
-                        const midMinus1 = new Date(midDate);
-                        midMinus1.setDate(midMinus1.getDate() - 1);
-                        setPeriod1({ start: availableDates.min, end: midMinus1.toISOString().split('T')[0] });
-                        setPeriod2({ start: midStr, end: availableDates.max });
-                        setCompareType('custom');
-                      }
-                    }}
-                    className={`px-2 py-1 text-xs rounded transition-colors ${
-                      activePreset === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                    }`}
-                  >
-                    All
-                  </button>
-                </div>
-
-                {/* Navigation */}
-                <div className="flex items-center gap-1 ml-auto">
-                  <button
-                    onClick={() => {
-                      const daysDiff = Math.round((new Date(dateRange.end) - new Date(dateRange.start)) / (1000 * 60 * 60 * 24));
-                      const newEnd = new Date(dateRange.start);
-                      newEnd.setDate(newEnd.getDate() - 1);
-                      const newStart = new Date(newEnd);
-                      newStart.setDate(newStart.getDate() - daysDiff);
-                      if (newStart >= new Date(availableDates.min)) {
-                        setDateRange({
-                          start: newStart.toISOString().split('T')[0],
-                          end: newEnd.toISOString().split('T')[0]
-                        });
-                        setActivePreset(null);
-                      }
-                    }}
-                    className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs"
-                    title="Previous period"
-                  >
-                    ◀◀
-                  </button>
-                  <button
-                    onClick={() => {
-                      const daysDiff = Math.round((new Date(dateRange.end) - new Date(dateRange.start)) / (1000 * 60 * 60 * 24)) + 1;
-                      const newStart = new Date(dateRange.end);
-                      newStart.setDate(newStart.getDate() + 1);
-                      const newEnd = new Date(newStart);
-                      newEnd.setDate(newEnd.getDate() + daysDiff - 1);
-                      if (newEnd <= new Date(availableDates.max)) {
-                        setDateRange({
-                          start: newStart.toISOString().split('T')[0],
-                          end: newEnd.toISOString().split('T')[0]
-                        });
-                        setActivePreset(null);
-                      }
-                    }}
-                    className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs"
-                    title="Next period"
-                  >
-                    ▶▶
-                  </button>
                 </div>
 
                 {/* Compare Toggle */}
@@ -1132,24 +1282,58 @@ function GarminSleepAnalyzer() {
                       p1End.setDate(p1End.getDate() - 1);
                       const p1Start = new Date(p1End);
                       p1Start.setDate(p1Start.getDate() - daysDiff);
-                      
-                      setPeriod1({ 
-                        start: p1Start.toISOString().split('T')[0], 
-                        end: p1End.toISOString().split('T')[0] 
+
+                      setPeriod1({
+                        start: p1Start.toISOString().split('T')[0],
+                        end: p1End.toISOString().split('T')[0]
                       });
                       setPeriod2({ start: dateRange.start, end: dateRange.end });
                       setCompareType('previous');
                     }
                     setCompareMode(!compareMode);
                   }}
-                  className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                    compareMode 
-                      ? 'bg-purple-600 text-white' 
+                  className={`ml-auto h-8 px-3 flex items-center rounded text-xs font-medium transition-colors ${
+                    compareMode
+                      ? 'bg-purple-600 text-white'
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
                 >
                   {compareMode ? '✓ Comparing' : 'Compare'}
                 </button>
+
+                {/* Copy for AI */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowCopyMenu(v => !v)}
+                    className="h-8 flex items-center gap-1.5 px-3 rounded text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                    title="Copy sleep data + prompt to clipboard for Claude/ChatGPT"
+                  >
+                    Copy for AI
+                    <span className="text-gray-500 text-[10px]">▾</span>
+                  </button>
+                  {showCopyMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowCopyMenu(false)} />
+                      <div className="absolute right-0 mt-1 w-40 bg-gray-800 border border-gray-700 rounded shadow-lg z-50 py-1">
+                        {[
+                          { label: '1 month', days: 30 },
+                          { label: '3 months', days: 90 },
+                          { label: '6 months', days: 180 },
+                          { label: '12 months', days: 365 },
+                          { label: 'All time', days: null },
+                        ].map(opt => (
+                          <button
+                            key={opt.label}
+                            onClick={() => copyForAI(opt.days)}
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700"
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Compare Options */}
@@ -1239,7 +1423,7 @@ function GarminSleepAnalyzer() {
                   </div>
 
                   {/* Timeline with drag-to-select */}
-                  <div className="bg-gray-800 rounded-lg p-3">
+                  <div className="bg-gray-900/50 rounded-lg p-3">
                     <div className="text-xs text-gray-500 mb-2">Drag on timeline to select period • Comparison auto-calculated</div>
                     
                     <div 
@@ -1367,7 +1551,10 @@ function GarminSleepAnalyzer() {
                   </div>
                 </div>
               )}
-            </div>
+              </div>
+
+              {/* Card content: everything controlled by the header */}
+              <div className="p-3 space-y-4">
 
             {/* Date Picker Modal */}
             {showDatePicker && (
@@ -1563,7 +1750,7 @@ function GarminSleepAnalyzer() {
                     p2: ts2[i]?.[currentChart.dataKey] ?? null,
                   }));
                   return (
-                    <div className="bg-gray-800 rounded-lg p-4">
+                    <div className="bg-gray-900/50 rounded-lg p-4">
                       <h2 className="text-lg font-semibold mb-1 text-blue-300">
                         {currentChart.title} — Period Overlay
                       </h2>
@@ -1626,7 +1813,7 @@ function GarminSleepAnalyzer() {
                 </div>
 
                 {/* Main Chart */}
-                <div className="bg-gray-800 rounded-lg p-4 relative">
+                <div className="bg-gray-900/50 rounded-lg p-4 relative transition-all" style={{ animation: syncing ? 'sync-pulse 2s ease-in-out infinite' : 'none' }}>
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-lg font-semibold text-blue-300">
                       {currentChart.title} Trend 
@@ -1634,9 +1821,38 @@ function GarminSleepAnalyzer() {
                         ({viewMode === 'days' ? 'Daily' : viewMode === 'weeks' ? 'Weekly avg' : 'Monthly avg'})
                       </span>
                     </h2>
-                    <span className="text-xs text-gray-500">
-                      {dateRange.start} → {dateRange.end} • {aggregatedTimeSeries.length} {viewMode}
-                    </span>
+                    <div className="text-right">
+                      <span className="text-xs text-gray-500">
+                        {dateRange.start} → {dateRange.end} • {aggregatedTimeSeries.length} {viewMode}
+                      </span>
+                      <button
+                        onClick={async () => {
+                          setSyncing(true);
+                          setSyncResult(null);
+                          const poll = setInterval(() => loadFromGarmy(), 3000);
+                          try {
+                            const res = await fetch('/api/sync', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ start: dateRange.start, end: dateRange.end }),
+                            });
+                            const data = await res.json();
+                            setSyncResult(data);
+                            if (data.ok) await loadFromGarmy();
+                          } catch (err) {
+                            setSyncResult({ ok: false, error: err.message });
+                          } finally {
+                            clearInterval(poll);
+                            setSyncing(false);
+                          }
+                        }}
+                        disabled={syncing}
+                        className="block ml-auto text-[10px] text-gray-600 hover:text-gray-400 transition-colors mt-0.5"
+                      >
+                        <span className="inline-block mr-1" style={{ display: 'inline-block', animation: syncing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+                        {syncing ? 'syncing...' : 'refresh data for selected date range'}
+                      </button>
+                    </div>
                   </div>
                   <ResponsiveContainer width="100%" height={300}>
                     <ComposedChart
@@ -1654,6 +1870,7 @@ function GarminSleepAnalyzer() {
                         }
                       }}
                       onMouseUp={() => {
+                        let producedStats = false;
                         if (isSelecting && selectStart && selectEnd && selectStart !== selectEnd) {
                           const startItem = aggregatedTimeSeries.find(d => d.shortDate === selectStart);
                           const endItem = aggregatedTimeSeries.find(d => d.shortDate === selectEnd);
@@ -1679,7 +1896,7 @@ function GarminSleepAnalyzer() {
                               const firstAvg = avg(firstHalf, currentChart.dataKey);
                               const secondAvg = avg(secondHalf, currentChart.dataKey);
                               const trend = firstAvg && secondAvg ? ((secondAvg - firstAvg) / firstAvg * 100) : 0;
-                              
+
                               setSelectionStats({
                                 startDate: dates[0],
                                 endDate: dates[1],
@@ -1691,12 +1908,15 @@ function GarminSleepAnalyzer() {
                                 trend: trend,
                                 nights: selectedData.reduce((sum, d) => sum + (d.nights || 1), 0)
                               });
+                              producedStats = true;
                             }
                           }
                         }
                         setIsSelecting(false);
-                        setSelectStart(null);
-                        setSelectEnd(null);
+                        if (!producedStats) {
+                          setSelectStart(null);
+                          setSelectEnd(null);
+                        }
                       }}
                       onMouseLeave={() => {
                         if (isSelecting) {
@@ -1717,16 +1937,38 @@ function GarminSleepAnalyzer() {
                         height={viewMode !== 'days' ? 60 : 30}
                       />
                       <YAxis stroke="#9ca3af" tick={{ fontSize: 11 }} domain={currentChart.domain} />
-                      <Tooltip 
-                        contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }} 
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
                         labelStyle={{ color: '#9ca3af' }}
-                        formatter={(value, name) => {
+                        content={activeChart === 'duration' ? ({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const d = payload[0]?.payload;
+                          if (!d) return null;
+                          const fmtHM = (h) => { if (h == null) return '-'; const hrs = Math.floor(h); const mins = Math.round((h - hrs) * 60); return `${hrs}h ${mins}m`; };
+                          const dateLabel = viewMode === 'weeks' ? `Week of ${d.date}` : viewMode === 'months' ? d.date : d.date;
+                          return React.createElement('div', { style: { backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', padding: '8px 12px', fontSize: '12px' } },
+                            React.createElement('div', { style: { color: '#9ca3af', marginBottom: 4 } }, dateLabel),
+                            React.createElement('div', { style: { display: 'flex', gap: 16 } },
+                              React.createElement('div', null,
+                                React.createElement('span', { style: { color: '#3b82f6', marginRight: 4 } }, '●'),
+                                React.createElement('span', { style: { color: '#d1d5db' } }, fmtHM(d.duration)),
+                                React.createElement('div', { style: { color: '#9ca3af', fontSize: 10 } }, 'Sleep Duration')
+                              ),
+                              d.sleepNeed != null && React.createElement('div', null,
+                                React.createElement('span', { style: { color: '#9ca3af', marginRight: 4 } }, '●'),
+                                React.createElement('span', { style: { color: '#d1d5db' } }, fmtHM(d.sleepNeed)),
+                                React.createElement('div', { style: { color: '#9ca3af', fontSize: 10 } }, 'Sleep Need')
+                              )
+                            )
+                          );
+                        } : undefined}
+                        formatter={activeChart !== 'duration' ? (value, name) => {
                           if (value == null) return ['-', name];
-                          const useDecimal = name.includes('Rolling') || name.includes('avg') || currentChart?.dataKey === 'duration';
+                          const useDecimal = name.includes('Rolling') || name.includes('avg');
                           const rounded = useDecimal ? value.toFixed(1) : Math.round(value);
-                          return [rounded, name.replace('Rolling', ' trend')];
-                        }}
-                        labelFormatter={(label, payload) => {
+                          return [rounded, name];
+                        } : undefined}
+                        labelFormatter={activeChart !== 'duration' ? (label, payload) => {
                           if (payload?.[0]?.payload) {
                             const item = payload[0].payload;
                             if (viewMode === 'weeks') return `Week of ${item.date} (${item.nights} nights)`;
@@ -1734,14 +1976,17 @@ function GarminSleepAnalyzer() {
                             return `${item.date}`;
                           }
                           return label;
-                        }}
+                        } : undefined}
                       />
-                      {isSelecting && selectStart && selectEnd && (
+                      {selectStart && selectEnd && (
                         <ReferenceArea x1={selectStart} x2={selectEnd} strokeOpacity={0.3} fill="#3b82f6" fillOpacity={0.3} />
                       )}
-                      <ReferenceLine y={currentChart.refLine} stroke="#6b7280" strokeDasharray="5 5" label={{ value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 }} />
-                      <Bar dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} />
-                      <Line type="linear" dataKey="trend" stroke="#ffffff" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Trend" />
+                      {currentChart.refLine && <ReferenceLine y={currentChart.refLine} stroke="#6b7280" strokeDasharray="5 5" label={{ value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 }} />}
+                      {activeChart === 'duration' && <Bar dataKey="durationMet" stackId="duration" fill="#22c55e" name="Sleep Need Met" tooltipType="none" isAnimationActive={false} />}
+                      {activeChart === 'duration' && <Bar dataKey="durationUnmet" stackId="duration" fill="#3b82f6" name="Sleep Duration" tooltipType="none" isAnimationActive={false} />}
+                      {activeChart === 'duration' && <Bar dataKey="needGap" stackId="duration" fill="#6b7280" opacity={0.5} name="Sleep Need" tooltipType="none" isAnimationActive={false} />}
+                      {activeChart !== 'duration' && <Bar dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} isAnimationActive={false} />}
+                      <Line type="linear" dataKey="trend" stroke="#ffffff" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Trend" tooltipType="none" isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                   <p className="text-xs text-gray-500 text-center mt-1">
@@ -1753,8 +1998,8 @@ function GarminSleepAnalyzer() {
                     <div className="absolute top-16 right-4 bg-gray-900 border border-gray-600 rounded-lg p-4 shadow-xl z-10 w-72">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-sm font-semibold text-blue-300">Selection Analysis</h4>
-                        <button 
-                          onClick={() => setSelectionStats(null)}
+                        <button
+                          onClick={() => { setSelectionStats(null); setSelectStart(null); setSelectEnd(null); }}
                           className="text-gray-400 hover:text-white text-lg leading-none"
                         >
                           ×
@@ -1797,6 +2042,8 @@ function GarminSleepAnalyzer() {
                             setDateRange({ start: selectionStats.startDate, end: selectionStats.endDate });
                             setActivePreset(null);
                             setSelectionStats(null);
+                            setSelectStart(null);
+                            setSelectEnd(null);
                           }}
                           className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-xs font-medium"
                         >
@@ -1822,6 +2069,8 @@ function GarminSleepAnalyzer() {
                             setCompareType('custom');
                             setActivePreset(null);
                             setSelectionStats(null);
+                            setSelectStart(null);
+                            setSelectEnd(null);
                           }}
                           className="flex-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded text-xs font-medium"
                         >
@@ -1833,7 +2082,7 @@ function GarminSleepAnalyzer() {
                 </div>
 
                 {/* Sleep Architecture */}
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="bg-gray-900/50 rounded-lg p-4">
                   <h2 className="text-lg font-semibold mb-3 text-blue-300">
                     Sleep Architecture
                     <span className="text-sm font-normal text-gray-500 ml-2">
@@ -1876,7 +2125,7 @@ function GarminSleepAnalyzer() {
                 </div>
 
                 {/* Respiration Detail */}
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="bg-gray-900/50 rounded-lg p-4">
                   <h2 className="text-lg font-semibold mb-3 text-blue-300">{hasAvgRespiration ? 'Respiration (Avg vs Lowest)' : 'Respiration (Lowest)'}</h2>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={aggregatedTimeSeries}>
@@ -1897,7 +2146,7 @@ function GarminSleepAnalyzer() {
                 </div>
 
                 {/* SpO2 Detail */}
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="bg-gray-900/50 rounded-lg p-4">
                   <h2 className="text-lg font-semibold mb-3 text-blue-300">SpO2 (Avg vs Lowest)</h2>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={aggregatedTimeSeries}>
@@ -1923,7 +2172,7 @@ function GarminSleepAnalyzer() {
                 </div>
 
                 {/* Recent Data Table */}
-                <div className="bg-gray-800 rounded-lg p-4 overflow-x-auto">
+                <div className="bg-gray-900/50 rounded-lg p-4 overflow-x-auto">
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-lg font-semibold text-blue-300">
                       {viewMode === 'days' ? 'Recent Nights (Last 14)' :
@@ -1991,12 +2240,12 @@ function GarminSleepAnalyzer() {
 
                 {copyToast && (
                   <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-700 text-white text-sm px-4 py-2 rounded-lg shadow-lg animate-pulse z-50">
-                    Table data copied
+                    Copied to clipboard
                   </div>
                 )}
 
                 {/* Key Observations */}
-                <div className="bg-gray-800 rounded-lg p-4">
+                <div className="bg-gray-900/50 rounded-lg p-4">
                   <h2 className="text-lg font-semibold mb-3 text-blue-300">Key Observations</h2>
                   <div className="space-y-2 text-sm">
                     {stats.rem.avg < 70 && <p className="text-yellow-400">⚠ REM average ({formatNum(stats.rem.avg)} min) below optimal (90+ min)</p>}
@@ -2009,6 +2258,8 @@ function GarminSleepAnalyzer() {
                 </div>
               </>
             )}
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -2035,7 +2286,7 @@ function StatCard({ title, avg, trend, higherIsBetter = true }) {
   }
 
   return (
-    <div className="bg-gray-800 rounded-lg p-3">
+    <div className="bg-gray-900/50 rounded-lg p-3">
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-xs text-gray-400">{title}</h3>
         {pct != null && (
@@ -2069,7 +2320,7 @@ function ComparisonCard({ title, value1, value2, format, unit, higherIsBetter })
   const selectedColor = noChange ? 'text-gray-300' : isGood ? 'text-green-400' : 'text-red-400';
   
   return (
-    <div className="bg-gray-800 rounded-lg p-3">
+    <div className="bg-gray-900/50 rounded-lg p-3">
       <h3 className="text-xs font-medium text-gray-400 mb-2">{title}</h3>
       
       <div className="flex items-center justify-between gap-2">

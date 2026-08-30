@@ -32,14 +32,17 @@ def days_since_last_sync():
 
 
 def main():
-    # explicit arg overrides auto-detection
-    if len(sys.argv) > 1:
+    if len(sys.argv) >= 4 and sys.argv[1] == "--range":
+        start_date = date.fromisoformat(sys.argv[2])
+        end_date = date.fromisoformat(sys.argv[3])
+    elif len(sys.argv) > 1:
         days = int(sys.argv[1])
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days - 1)
     else:
         days = days_since_last_sync()
-
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days - 1)
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days - 1)
 
     auth = AuthClient()
     if not auth.is_authenticated:
@@ -63,9 +66,42 @@ def main():
     manager.activities_iterator = ActivitiesIterator(api, manager.config.sync, manager.progress)
     manager.activities_iterator.initialize()
 
+    # Reset sync status for the range so stale data gets refreshed
+    db = sqlite3.connect(str(DB_PATH))
+    db.execute(
+        "DELETE FROM sync_status WHERE sync_date >= ? AND sync_date <= ? AND user_id = 1",
+        (start_date.isoformat(), end_date.isoformat()),
+    )
+    db.commit()
+    db.close()
+
+    days = (end_date - start_date).days + 1
     print(f"Syncing {start_date} to {end_date} ({days} day{'s' if days != 1 else ''})")
     stats = manager.sync_range(user_id=1, start_date=start_date, end_date=end_date, metrics=list(MetricType))
     print(f"Done: {stats['completed']} completed, {stats['skipped']} skipped, {stats['failed']} failed")
+
+    # Backfill sleep_need from sleep API
+    sleep_metric = api.metrics.get("sleep")
+    db = sqlite3.connect(str(DB_PATH))
+    updated = 0
+    current = start_date
+    while current <= end_date:
+        try:
+            sleep = sleep_metric.get(current)
+            need = getattr(sleep.sleep_summary, "sleep_need", None)
+            if need and "baseline" in need:
+                db.execute(
+                    "UPDATE daily_health_metrics SET sleep_need_minutes = ? WHERE user_id = 1 AND metric_date = ?",
+                    (need["baseline"], current.isoformat()),
+                )
+                updated += 1
+        except Exception:
+            pass
+        current += timedelta(days=1)
+    db.commit()
+    db.close()
+    if updated:
+        print(f"Sleep need: updated {updated} day{'s' if updated != 1 else ''}")
 
 if __name__ == "__main__":
     main()
