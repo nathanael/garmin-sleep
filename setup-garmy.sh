@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstrap: create .venv, install garmy, and log you in to Garmin Connect.
+# Bootstrap: create .venv and install garmy. Sign in happens in the browser after the server starts.
 set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"

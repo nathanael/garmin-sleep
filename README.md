@@ -6,7 +6,7 @@
 
 ## What it shows
 
-- **Summary cards and trend charts** — duration, REM, deep, light, respiration, average SpO2, HRV, resting heart rate, body battery. Each card shows the delta against the prior period of the same length.
+- **Summary cards and trend charts** — duration, REM, deep, respiration, average SpO2, HRV, resting heart rate, body battery. Each card shows the delta against the prior period of the same length.
 - **Stage breakdown** — deep, REM, and light minutes stacked per night, so you can see composition change at a glance.
   ![Stage breakdown](docs/screenshots/architecture.png)
 - **Compare any two periods** — drag-to-select on any chart, or pick two windows explicitly, and get a day-by-day overlay with summary deltas.
@@ -35,7 +35,7 @@ cd garmin-sleep
 .venv/bin/python garmin-sleep-upgrade/server.py    # opens at http://localhost:8484
 ```
 
-Sign in on the page itself. The first 7 days sync immediately; 30 days and then the last 12 months fill in behind you. Older history is a button in the dashboard.
+> Sign in on the page itself. The first 7 days sync immediately; 30 days and then the last 12 months fill in behind you. Older history is a button in the dashboard.
 
 ## Daily sync (optional)
 
