@@ -9,6 +9,8 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import db
+import sync_jobs
 from garmy import AuthClient
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -187,7 +189,7 @@ class Handler(SimpleHTTPRequestHandler):
         date_filter = f"  AND metric_date >= date('now', '-{days} days')\n" if days else ""
         query = SLEEP_QUERY.format(date_filter)
 
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = db.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute(query).fetchall()
