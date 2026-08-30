@@ -14,6 +14,21 @@ from garmy.localdb.models import MetricType
 DB_PATH = Path(__file__).parent / "health.db"
 
 
+def has_sleep_need_column(db):
+    """Whether daily_health_metrics has a sleep_need_minutes column.
+
+    garmy 2.0.0 dropped this column, so on current garmy the sleep-need
+    backfill loop below has nothing to write to: every day's UPDATE would
+    raise (caught by a bare except) after already paying for a Garmin API
+    call that was never going to matter. Checked once, up front, so a
+    full 365-day chain (or a multi-year "load more history" backfill)
+    skips the whole loop instead of making one wasted round-trip per day.
+    """
+    return any(
+        row[1] == "sleep_need_minutes" for row in db.execute("PRAGMA table_info(daily_health_metrics)")
+    )
+
+
 def days_since_last_sync():
     """Check the DB and return the number of days missing since the last synced date."""
     try:
@@ -80,28 +95,30 @@ def main():
     stats = manager.sync_range(user_id=1, start_date=start_date, end_date=end_date, metrics=list(MetricType))
     print(f"Done: {stats['completed']} completed, {stats['skipped']} skipped, {stats['failed']} failed")
 
-    # Backfill sleep_need from sleep API
-    sleep_metric = api.metrics.get("sleep")
+    # Backfill sleep_need from sleep API -- skipped entirely when the
+    # column doesn't exist on this garmy version (see has_sleep_need_column).
     db = sqlite3.connect(str(DB_PATH))
-    updated = 0
-    current = start_date
-    while current <= end_date:
-        try:
-            sleep = sleep_metric.get(current)
-            need = getattr(sleep.sleep_summary, "sleep_need", None)
-            if need and "baseline" in need:
-                db.execute(
-                    "UPDATE daily_health_metrics SET sleep_need_minutes = ? WHERE user_id = 1 AND metric_date = ?",
-                    (need["baseline"], current.isoformat()),
-                )
-                updated += 1
-        except Exception:
-            pass
-        current += timedelta(days=1)
-    db.commit()
+    if has_sleep_need_column(db):
+        sleep_metric = api.metrics.get("sleep")
+        updated = 0
+        current = start_date
+        while current <= end_date:
+            try:
+                sleep = sleep_metric.get(current)
+                need = getattr(sleep.sleep_summary, "sleep_need", None)
+                if need and "baseline" in need:
+                    db.execute(
+                        "UPDATE daily_health_metrics SET sleep_need_minutes = ? WHERE user_id = 1 AND metric_date = ?",
+                        (need["baseline"], current.isoformat()),
+                    )
+                    updated += 1
+            except Exception:
+                pass
+            current += timedelta(days=1)
+        db.commit()
+        if updated:
+            print(f"Sleep need: updated {updated} day{'s' if updated != 1 else ''}")
     db.close()
-    if updated:
-        print(f"Sleep need: updated {updated} day{'s' if updated != 1 else ''}")
 
 if __name__ == "__main__":
     main()
