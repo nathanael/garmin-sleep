@@ -41,6 +41,7 @@ The spec lists "a test framework" as a non-goal. That means **no new dependency*
 | `tests/test_sync_jobs.py` | Create | Unit tests for the runner. |
 | `tests/test_db.py` | Create | Concurrency test for WAL. |
 | `tests/test_endpoints.py` | Create | HTTP-level tests for the two new endpoints. |
+| `setup-garmy.sh` | Modify | Step 3 stops prompting for login; points at the browser. |
 | `README.md` | Modify | Install steps drop the manual `login.py`. |
 | `garmin-sleep-upgrade/README.md` | Modify | Note standalone mode is now behind a link. |
 
@@ -926,7 +927,77 @@ In the dashboard header near index.html:1003, immediately after the `<h1>` conta
           )}
 ```
 
-- [ ] **Step 7: Verify the progression end to end**
+- [ ] **Step 7: Migrate the dashboard's "sync latest" button**
+
+`POST /api/sync` no longer honours `{days}` and no longer returns `{ok, output}`.
+The button at index.html:1008-1014 calls `syncFromGarmin(7)`, so after Task 3 it
+would trigger a full 365-day chain and never reload. Replace its `onClick`:
+
+```jsx
+                  onClick={syncLatest}
+```
+
+and add `syncLatest` immediately after `startProgressiveSync`:
+
+```jsx
+  const syncLatest = async () => {
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - 6);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start: iso(start), end: iso(today) }),
+    });
+    const body = await res.json();
+    setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
+  };
+```
+
+- [ ] **Step 8: Migrate the date-range refresh control**
+
+The control at index.html:1822-1841 hand-rolls a 3s `setInterval` and clears it
+when the fetch resolves. Against a 202 that is immediate, so it polls once and
+stops. Replace the whole `onClick` arrow with:
+
+```jsx
+                        onClick={async () => {
+                          const res = await fetch('/api/sync', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ start: dateRange.start, end: dateRange.end }),
+                          });
+                          const body = await res.json();
+                          setSyncJob(res.status === 409 ? body.job : { ...body, running: true, stages: [] });
+                        }}
+```
+
+The poll effect from Step 2 now drives the reloads, so the local interval goes away.
+
+- [ ] **Step 9: Remove the code those two migrations orphaned**
+
+Delete `syncFromGarmin` entirely (index.html:254-274) — no callers remain.
+
+Delete the `syncResult` state (index.html:41); its only readers were the empty-state
+lines Task 4 removed and the two `onClick` handlers just rewritten.
+
+Replace the `syncing` state (index.html:40) with a value derived from the job, so the
+dashboard's existing spinner and disabled states keep working:
+
+```jsx
+  const syncing = syncJob?.running ?? false;
+```
+
+Verify no `setSyncing(` or `setSyncResult(` calls remain:
+
+```bash
+grep -n "setSyncing(\|setSyncResult(\|syncFromGarmin" garmin-sleep-upgrade/index.html
+```
+
+Expected: no output.
+
+- [ ] **Step 10: Verify the progression end to end**
 
 This step needs the account owner — it makes real Garmin calls.
 
@@ -936,11 +1007,11 @@ This step needs the account owner — it makes real Garmin calls.
 4. Expected: the header pill reads "stage 2 of 3", then "stage 3 of 3"; night count grows on each poll without the page going blank.
 5. While stage 3 runs, confirm the UI stays responsive — switch charts, change the aggregation toggle. This is the check that threading actually worked.
 
-- [ ] **Step 8: Verify reload recovery**
+- [ ] **Step 11: Verify reload recovery**
 
 Mid-sync, reload the page. Expected: it re-adopts the running job via the 409 path and keeps showing progress rather than starting a second sync.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add garmin-sleep-upgrade/index.html
