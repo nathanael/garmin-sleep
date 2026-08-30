@@ -234,7 +234,7 @@ function GarminSleepAnalyzer() {
     end.setDate(end.getDate() - 365);                       // where the chain stopped
     const start = new Date(today);
     start.setFullYear(start.getFullYear() - parseInt(historyYears, 10));
-    const iso = (d) => d.toISOString().slice(0, 10);
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -249,7 +249,7 @@ function GarminSleepAnalyzer() {
     const today = new Date();
     const start = new Date(today);
     start.setDate(start.getDate() - 6);
-    const iso = (d) => d.toISOString().slice(0, 10);
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const res = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1111,7 +1111,7 @@ function GarminSleepAnalyzer() {
                 Sync stopped: {syncJob.error} ×
               </button>
             )}
-            {!syncJob?.running && (
+            {authStatus === true && !syncJob?.running && (
               <span className="ml-3 inline-flex items-center gap-2 text-xs">
                 <select
                   value={historyYears}
