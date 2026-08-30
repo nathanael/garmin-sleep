@@ -1129,6 +1129,14 @@ function GarminSleepAnalyzer() {
     );
   }
 
+  // A stage can return "ok" (subprocess exit 0) while still having failed
+  // to sync individual days -- sync.py exits 0 regardless of per-day
+  // failures. Surface that here rather than letting a partial failure
+  // read as an unqualified success (IMPORTANT 4).
+  const syncFailedDays = (syncJob?.stages || []).reduce(
+    (sum, s) => sum + (s.counts?.failed || 0), 0
+  );
+
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       {showLogin && <LoginModal />}
@@ -1139,6 +1147,7 @@ function GarminSleepAnalyzer() {
             {syncJob?.running && (
               <span className="ml-3 text-xs text-blue-300 bg-blue-900/40 px-2 py-1 rounded-full">
                 Syncing history — stage {syncJob.stage} of {syncJob.total}
+                {syncFailedDays > 0 && ` (${syncFailedDays} day${syncFailedDays === 1 ? '' : 's'} failed so far)`}
               </span>
             )}
             {syncJob && !syncJob.running && syncJob.error && (
@@ -1148,6 +1157,15 @@ function GarminSleepAnalyzer() {
                 title="Dismiss"
               >
                 Sync stopped: {syncJob.error} ×
+              </button>
+            )}
+            {syncJob && !syncJob.running && !syncJob.error && syncFailedDays > 0 && (
+              <button
+                onClick={() => setSyncJob(null)}
+                className="ml-3 text-xs text-yellow-300 bg-yellow-900/40 px-2 py-1 rounded-full"
+                title="Dismiss"
+              >
+                Sync finished, but {syncFailedDays} day{syncFailedDays === 1 ? '' : 's'} failed ×
               </button>
             )}
             {authStatus === true && !syncJob?.running && (

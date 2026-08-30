@@ -10,6 +10,7 @@ sys.path.insert(0, str(REPO / "garmin-sleep-upgrade"))
 import sync_jobs  # noqa: E402
 
 STUB = str(Path(__file__).resolve().parent / "stub_sync.py")
+PARTIAL_FAILURE_STUB = str(Path(__file__).resolve().parent / "stub_sync_partial_failure.py")
 
 
 def wait_until_done(runner, timeout=10):
@@ -44,6 +45,26 @@ class ChainRangesTest(unittest.TestCase):
                 seen.add(d)
                 d = d.fromordinal(d.toordinal() + 1)
         self.assertEqual(len(seen), 365)
+
+
+class ParseStageCountsTest(unittest.TestCase):
+    def test_parses_the_real_summary_line(self):
+        output = "Syncing 2026-01-01 to 2026-01-07 (7 days)\nDone: 48 completed, 14 skipped, 8 failed"
+        self.assertEqual(
+            sync_jobs.parse_stage_counts(output),
+            {"completed": 48, "skipped": 14, "failed": 8},
+        )
+
+    def test_none_when_summary_line_absent(self):
+        self.assertIsNone(sync_jobs.parse_stage_counts("stub synced 2026-08-24"))
+        self.assertIsNone(sync_jobs.parse_stage_counts(""))
+        self.assertIsNone(sync_jobs.parse_stage_counts(None))
+
+    def test_all_zero_counts_still_parsed(self):
+        self.assertEqual(
+            sync_jobs.parse_stage_counts("Done: 0 completed, 0 skipped, 0 failed"),
+            {"completed": 0, "skipped": 0, "failed": 0},
+        )
 
 
 class JobRunnerTest(unittest.TestCase):
@@ -127,6 +148,55 @@ class JobRunnerTest(unittest.TestCase):
         self.assertFalse(final["running"], "job should complete")
         self.assertIsNotNone(final["error"], "error should be recorded for non-zero exit")
         self.assertEqual(len(final["stages"]), 1, "stage should be recorded")
+        self.assertFalse(final["stages"][0]["ok"])
+
+    def test_stage_reports_failure_counts_even_though_exit_code_is_zero(self):
+        """IMPORTANT 4: sync.py exits 0 regardless of per-day failures, so
+        a stage with real per-day Garmin failures still looks 'ok' by
+        return code alone -- live evidence was a job with "ok": true
+        whose own stdout read "Done: 48 completed, 14 skipped, 8 failed".
+        The stage record must carry the parsed counts so callers (the
+        UI) can tell the difference between a clean stage and one that
+        silently dropped data.
+        """
+        runner = sync_jobs.JobRunner(sys.executable, PARTIAL_FAILURE_STUB, timeout=30)
+        runner.start([("2026-08-24", "2026-08-30")])
+        final = wait_until_done(runner)
+        self.assertIsNone(final["error"])
+        stage = final["stages"][0]
+        self.assertTrue(stage["ok"], "returncode 0 still counts as ok -- sync.py's exit code is unchanged")
+        self.assertEqual(stage["counts"], {"completed": 48, "skipped": 14, "failed": 8})
+
+    def test_refuses_to_spawn_anything_named_sync_py_while_under_unittest(self):
+        """Second, independent guard against the real Garmin sync ever running
+        in a test process: a future test could construct its own JobRunner
+        pointed at the real production sync.py and forget to swap in a
+        stub (exactly what SyncEndpointTest.setUp does today, correctly,
+        for /api/sync tests). sync.py makes real Garmin API calls against
+        the user's real account, so this must not depend on that one
+        setUp being copied correctly forever.
+
+        The guard trips on the script's basename ("sync.py") while
+        'unittest' is loaded in sys.modules -- true for the entire process
+        any time tests run via `python -m unittest ...`, regardless of
+        which test file or class is executing. It requires no test to opt
+        in.
+
+        The path below is not the real sync.py (it doesn't exist), so if
+        the guard did NOT fire, subprocess.run would still fail --
+        asserting the specific refusal message, not just "some error", is
+        what proves the guard itself fired rather than a plain
+        file-not-found (see test_nonexistent_script_exits_nonzero_stops_chain
+        directly above, which is that plain case).
+        """
+        runner = sync_jobs.JobRunner(sys.executable, "/definitely/not/real/sync.py", timeout=30)
+        job_id, job = runner.start([("2026-08-24", "2026-08-30")])
+        self.assertIsNotNone(job_id)
+        final = wait_until_done(runner)
+        self.assertFalse(final["running"])
+        self.assertIsNotNone(final["error"])
+        self.assertIn("Refusing to spawn", final["error"])
+        self.assertEqual(len(final["stages"]), 1)
         self.assertFalse(final["stages"][0]["ok"])
 
 
