@@ -4,6 +4,7 @@
 import json
 import sqlite3
 import sys
+import threading
 from datetime import date
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,6 +21,20 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 auth = AuthClient()
 mfa_state = {}  # temporary storage for MFA flow
+
+# Guards `mfa_state` and every call into `auth` (login/resume_login/logout/
+# refresh_tokens/is_authenticated/needs_refresh). Under the old single-
+# threaded HTTPServer only one request was ever in flight, so this was
+# implicitly safe; ThreadingHTTPServer makes concurrent requests possible,
+# and garmy.AuthClient's internal thread-safety is unknown, so we serialize
+# access at this boundary instead. This deliberately holds the lock across
+# the network call inside auth.login()/resume_login()/logout()/
+# refresh_tokens() -- there's no way to safely serialize calls into an
+# opaque client object without covering the call itself, so two concurrent
+# auth requests will block on each other rather than run in parallel. That
+# is an acceptable tradeoff for a single-user local tool where correctness
+# under a rare double-submit matters more than auth-endpoint throughput.
+AUTH_LOCK = threading.Lock()
 
 RUNNER = sync_jobs.JobRunner(
     str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable,
@@ -182,12 +197,14 @@ class Handler(SimpleHTTPRequestHandler):
     # --- Auth endpoints ---
 
     def serve_auth_status(self):
-        if not auth.is_authenticated and auth.needs_refresh:
-            try:
-                auth.refresh_tokens()
-            except Exception:
-                pass
-        json_response(self, {"authenticated": auth.is_authenticated})
+        with AUTH_LOCK:
+            if not auth.is_authenticated and auth.needs_refresh:
+                try:
+                    auth.refresh_tokens()
+                except Exception:
+                    pass
+            authenticated = auth.is_authenticated
+        json_response(self, {"authenticated": authenticated})
 
     def serve_auth_login(self):
         global mfa_state
@@ -197,33 +214,42 @@ class Handler(SimpleHTTPRequestHandler):
         if not email or not password:
             json_response(self, {"ok": False, "error": "Email and password required"}, 400)
             return
-        try:
-            result = auth.login(email, password, return_on_mfa=True)
-            if isinstance(result, tuple) and result[0] == "needs_mfa":
-                mfa_state = result[1]
-                json_response(self, {"ok": True, "mfa_required": True})
-            else:
-                mfa_state = {}
-                json_response(self, {"ok": True, "mfa_required": False})
-        except Exception as e:
-            json_response(self, {"ok": False, "error": str(e)}, 401)
+
+        with AUTH_LOCK:
+            try:
+                result = auth.login(email, password, return_on_mfa=True)
+                if isinstance(result, tuple) and result[0] == "needs_mfa":
+                    mfa_state = result[1]
+                    response, status = {"ok": True, "mfa_required": True}, 200
+                else:
+                    mfa_state = {}
+                    response, status = {"ok": True, "mfa_required": False}, 200
+            except Exception as e:
+                response, status = {"ok": False, "error": str(e)}, 401
+
+        json_response(self, response, status)
 
     def serve_auth_mfa(self):
         global mfa_state
         body = read_body(self)
         code = body.get("code", "")
-        if not code or not mfa_state:
-            json_response(self, {"ok": False, "error": "MFA code required"}, 400)
-            return
-        try:
-            auth.resume_login(code, mfa_state)
-            mfa_state = {}
-            json_response(self, {"ok": True})
-        except Exception as e:
-            json_response(self, {"ok": False, "error": str(e)}, 401)
+
+        with AUTH_LOCK:
+            if not code or not mfa_state:
+                response, status = {"ok": False, "error": "MFA code required"}, 400
+            else:
+                try:
+                    auth.resume_login(code, mfa_state)
+                    mfa_state = {}
+                    response, status = {"ok": True}, 200
+                except Exception as e:
+                    response, status = {"ok": False, "error": str(e)}, 401
+
+        json_response(self, response, status)
 
     def serve_auth_logout(self):
-        auth.logout()
+        with AUTH_LOCK:
+            auth.logout()
         json_response(self, {"ok": True})
 
     # --- Sync endpoint ---

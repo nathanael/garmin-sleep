@@ -34,7 +34,11 @@ def post(url, payload=None):
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read())
+        # HTTPError wraps a response file object; close it explicitly (it's
+        # a context manager) instead of leaving it for the GC to finalize,
+        # which otherwise emits a ResourceWarning on the 409 test.
+        with e:
+            return e.code, json.loads(e.read())
 
 
 class SyncEndpointTest(unittest.TestCase):
@@ -44,6 +48,11 @@ class SyncEndpointTest(unittest.TestCase):
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        # Registered in this order so LIFO teardown calls shutdown() (stop
+        # the serve_forever loop) before server_close() (release the
+        # listening socket) -- closing the socket first while the loop is
+        # still running risks a "Bad file descriptor" in the daemon thread.
+        self.addCleanup(self.httpd.server_close)
         self.addCleanup(self.httpd.shutdown)
 
     def wait_until_done(self, timeout=10):
