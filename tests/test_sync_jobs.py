@@ -103,18 +103,31 @@ class JobRunnerTest(unittest.TestCase):
         self.assertTrue(current["stages"][0]["ok"])
         self.assertEqual(current["stages"][0]["range"], ["2026-08-24", "2026-08-30"])
 
-    def test_nonexistent_script_path_clears_running_and_records_error(self):
-        runner = sync_jobs.JobRunner(sys.executable, "/nonexistent/path/to/sync.py", timeout=30)
+    def test_nonexistent_interpreter_exception_clears_running_and_records_error(self):
+        # Nonexistent interpreter path causes FileNotFoundError in subprocess.run
+        runner = sync_jobs.JobRunner("/nonexistent/python", STUB, timeout=30)
         job_id, job = runner.start([("2026-08-24", "2026-08-30")])
         self.assertIsNotNone(job_id)
         final = wait_until_done(runner)
         self.assertFalse(final["running"], "running flag should be cleared after exception")
         self.assertIsNotNone(final["error"], "error should be recorded")
+        self.assertIn("FileNotFoundError", final["error"])
         self.assertEqual(len(final["stages"]), 1, "stage should be recorded despite error")
         self.assertFalse(final["stages"][0]["ok"])
         # Subsequent start should succeed (not refused)
         job_id2, job2 = runner.start([("2026-08-24", "2026-08-30")])
         self.assertIsNotNone(job_id2, "should accept new job after previous failed")
+
+    def test_nonexistent_script_exits_nonzero_stops_chain(self):
+        # Nonexistent script path: interpreter launches successfully but exits with code 2
+        runner = sync_jobs.JobRunner(sys.executable, "/nonexistent/path/to/sync.py", timeout=30)
+        job_id, job = runner.start([("2026-08-24", "2026-08-30")])
+        self.assertIsNotNone(job_id)
+        final = wait_until_done(runner)
+        self.assertFalse(final["running"], "job should complete")
+        self.assertIsNotNone(final["error"], "error should be recorded for non-zero exit")
+        self.assertEqual(len(final["stages"]), 1, "stage should be recorded")
+        self.assertFalse(final["stages"][0]["ok"])
 
 
 if __name__ == "__main__":
