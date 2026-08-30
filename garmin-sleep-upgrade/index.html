@@ -119,10 +119,22 @@ function GarminSleepAnalyzer() {
   useEffect(() => {
     if (!syncJob || !syncJob.running) return;
     let cancelled = false;
+    // Re-fetch only when a stage has actually landed (or the job just
+    // finished) -- not on every 2s tick. loadFromGarmy() always replaces
+    // sleepData with a fresh array, and the effect keyed on [sleepData]
+    // resets the user's date range/preset/compare windows whenever that
+    // happens, so polling more often than data actually changes would
+    // revert the user's selections throughout stages 2 and 3 (minutes of
+    // wall time, up to 358 days of API calls).
+    let lastStageCount = syncJob.stages?.length || 0;
     const id = setInterval(async () => {
       const job = await pollSyncStatus();
       if (cancelled) return;
-      loadFromGarmy();               // re-read whatever has landed so far
+      const stageCount = job.stages?.length || 0;
+      if (stageCount > lastStageCount || !job.running) {
+        lastStageCount = stageCount;
+        loadFromGarmy();             // re-read what this stage landed
+      }
       if (!job.running) clearInterval(id);
     }, 2000);
     return () => { cancelled = true; clearInterval(id); };
