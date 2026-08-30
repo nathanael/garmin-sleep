@@ -729,7 +729,7 @@ function GarminSleepAnalyzer() {
     return { color: '#ef4444', label: 'LOW' };
   };
 
-  const Donut = ({ value, max, color, size = 68, stroke = 8, label, unit, qualifier }) => {
+  const Donut = ({ value, max, color, size = 68, stroke = 8, label, unit }) => {
     const pct = value == null || max == null ? 0 : Math.max(0, Math.min(1, value / max));
     const r = (size - stroke) / 2;
     const c = 2 * Math.PI * r;
@@ -748,7 +748,6 @@ function GarminSleepAnalyzer() {
           </div>
         </div>
         <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
-        {qualifier && <div className="text-[9px] font-semibold" style={{ color }}>{qualifier}</div>}
       </div>
     );
   };
@@ -999,28 +998,27 @@ function GarminSleepAnalyzer() {
     <div className="min-h-screen bg-gray-900 text-gray-100">
       {showLogin && <LoginModal />}
       <div className="max-w-6xl mx-auto p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-blue-400">
-            Garmin Sleep Analyzer
-            <span className="text-xs font-normal text-gray-500 ml-2">v1.9.1</span>
-          </h1>
-          <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center justify-between mb-3 text-xs">
+          <div className="text-gray-400 font-medium">
+            Garmin Sleep Analyzer <span className="text-gray-600 font-normal ml-1">v1.9.1</span>
+          </div>
+          <div className="flex items-center gap-3">
             {authStatus === true && (
               <>
                 <button
                   onClick={() => syncFromGarmin(7)}
                   disabled={syncing}
-                  className="px-2 py-1 bg-green-600 hover:bg-green-500 disabled:bg-green-800 disabled:text-gray-400 text-white rounded text-xs font-medium transition-colors"
+                  className="text-green-400 hover:text-green-300 disabled:text-gray-500 underline underline-offset-2"
                 >
-                  {syncing ? 'Syncing...' : 'Sync Latest'}
+                  {syncing ? 'syncing…' : 'sync latest'}
                 </button>
-                <span className="text-green-400">Garmin connected</span>
-                <button onClick={handleLogout} className="text-gray-500 hover:text-gray-300">logout</button>
+                <span className="text-gray-500">connected</span>
+                <button onClick={handleLogout} className="text-gray-500 hover:text-gray-300 underline underline-offset-2">logout</button>
               </>
             )}
             {authStatus === false && (
-              <button onClick={() => setShowLogin(true)} className="px-2 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded text-xs">
-                Sign in to Garmin
+              <button onClick={() => setShowLogin(true)} className="text-yellow-400 hover:text-yellow-300 underline underline-offset-2">
+                sign in to Garmin
               </button>
             )}
           </div>
@@ -1045,7 +1043,6 @@ function GarminSleepAnalyzer() {
                 sleepNeed: d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null,
               }));
               const last = nights[nights.length - 1];
-              const baselineHrs = last.sleepNeed || nights.map(d => d.sleepNeed).filter(v => v != null).slice(-1)[0] || 7.83;
               const debtHrs = nights.reduce((sum, d) => {
                 if (d.duration == null || d.sleepNeed == null) return sum;
                 return sum + Math.max(0, d.sleepNeed - d.duration);
@@ -1064,21 +1061,19 @@ function GarminSleepAnalyzer() {
                             strokeDasharray={`${2 * Math.PI * 52 * ((last.score || 0) / 100)} ${2 * Math.PI * 52}`}
                             strokeLinecap="round" />
                         </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <div className="text-3xl font-bold text-white leading-none">{last.score != null ? Math.round(last.score) : '—'}</div>
-                          <div className="text-xs text-gray-500 mt-0.5">/ 100</div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-4xl font-bold text-white leading-none">{last.score != null ? Math.round(last.score) : '—'}</div>
                         </div>
                       </div>
                       <div>
                         <div className="text-xs text-gray-500 uppercase tracking-wide">Last night</div>
-                        <div className="text-lg font-bold" style={{ color: scoreQ.color }}>{scoreQ.label}</div>
-                        <div className="text-xs text-gray-400 mt-1">{last.date}</div>
-                        <div className="text-sm text-gray-300 mt-1">{fmtHM(last.duration)} <span className="text-gray-500">/ {fmtHM(baselineHrs)} need</span></div>
+                        <div className="text-2xl font-bold" style={{ color: scoreQ.color }}>{scoreQ.label}</div>
+                        <div className="text-lg text-gray-300 mt-1">{fmtHM(last.duration)}</div>
                       </div>
                     </div>
                     {/* RISE-style sleep debt */}
                     <div className="flex flex-col justify-center">
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Sleep debt (last 14 nights)</div>
+                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Sleep debt</div>
                       <div className={`text-3xl font-bold mb-2 ${debtHrs > 5 ? 'text-red-400' : debtHrs > 2 ? 'text-yellow-400' : 'text-green-400'}`}>{fmtHM(debtHrs)}</div>
                       <div className="flex gap-1 h-7">
                         {nights.map((d, i) => {
@@ -1093,21 +1088,18 @@ function GarminSleepAnalyzer() {
                           );
                         })}
                       </div>
-                      <div className="text-[10px] text-gray-500 mt-1">vs {fmtHM(baselineHrs)} baseline</div>
                     </div>
                   </div>
                   {/* Oura-style contributor rings */}
                   <div className="pt-4">
-                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-3">Last night contributors</div>
                     <div className="flex flex-wrap gap-3 justify-around">
-                      <Donut value={last.score} max={100} label="Score" qualifier={qualify('score', last.score).label} color={qualify('score', last.score).color} />
-                      <Donut value={last.duration} max={9} label="Duration" unit="hrs" qualifier={qualify('duration', last.duration).label} color={qualify('duration', last.duration).color} />
-                      <Donut value={last.rem} max={120} label="REM" unit="min" qualifier={qualify('rem', last.rem).label} color={qualify('rem', last.rem).color} />
-                      <Donut value={last.deep} max={90} label="Deep" unit="min" qualifier={qualify('deep', last.deep).label} color={qualify('deep', last.deep).color} />
-                      <Donut value={last.hrv} max={60} label="HRV" unit="ms" qualifier={qualify('hrv', last.hrv).label} color={qualify('hrv', last.hrv).color} />
-                      <Donut value={last.restingHr} max={80} label="RHR" unit="bpm" qualifier={qualify('rhr', last.restingHr).label} color={qualify('rhr', last.restingHr).color} />
-                      <Donut value={last.respiration} max={25} label="Resp" unit="brpm" qualifier={qualify('resp', last.respiration).label} color={qualify('resp', last.respiration).color} />
-                      <Donut value={last.spo2} max={100} label="SpO2" unit="%" qualifier={qualify('spo2', last.spo2).label} color={qualify('spo2', last.spo2).color} />
+                      <Donut value={last.duration} max={9} label="Duration" unit="hrs" color={qualify('duration', last.duration).color} />
+                      <Donut value={last.rem} max={120} label="REM" unit="min" color={qualify('rem', last.rem).color} />
+                      <Donut value={last.deep} max={90} label="Deep" unit="min" color={qualify('deep', last.deep).color} />
+                      <Donut value={last.hrv} max={60} label="HRV" unit="ms" color={qualify('hrv', last.hrv).color} />
+                      <Donut value={last.restingHr} max={80} label="RHR" unit="bpm" color={qualify('rhr', last.restingHr).color} />
+                      <Donut value={last.respiration} max={25} label="Resp" unit="brpm" color={qualify('resp', last.respiration).color} />
+                      <Donut value={last.spo2} max={100} label="SpO2" unit="%" color={qualify('spo2', last.spo2).color} />
                     </div>
                   </div>
                 </div>
@@ -1210,8 +1202,8 @@ function GarminSleepAnalyzer() {
                           onClick={() => setShowRangeMenu(!showRangeMenu)}
                           className="h-8 flex items-center gap-2 bg-gray-700 hover:bg-gray-600 px-3 text-sm"
                         >
-                          <span className="font-medium">{rangeLabel}</span>
-                          <span className="text-gray-400 text-xs">{stats.totalNights} nights</span>
+                          <span className="font-medium">{stats.totalNights} nights</span>
+                          <span className="text-gray-400 text-xs">{rangeLabel}</span>
                           <span className="text-gray-500 text-[10px]">▾</span>
                         </button>
                         {showRangeMenu && (
@@ -1784,33 +1776,35 @@ function GarminSleepAnalyzer() {
             {/* Stats Grid - Only show when not in compare mode */}
             {!compareMode && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <StatCard title="Sleep Score" avg={formatNum(stats.sleepScore.avg, 0)} trend={periodTrend?.sleepScore} />
-                  <StatCard title="Duration" avg={`${formatNum(stats.duration.avg)} hrs`} trend={periodTrend?.duration} />
-                  <StatCard title="REM Sleep" avg={`${formatNum(stats.rem.avg)} min`} trend={periodTrend?.rem} />
-                  <StatCard title="Deep Sleep" avg={`${formatNum(stats.deep.avg)} min`} trend={periodTrend?.deep} />
-                  <StatCard title="Respiration" avg={`${formatNum(stats.respiration.avg)} brpm`} trend={periodTrend?.respiration} higherIsBetter={false} />
-                  <StatCard title="SpO2 Low" avg={`${formatNum(stats.spo2.lowestAvg)}%`} trend={periodTrend?.spo2Low} />
-                  <StatCard title="Stress" avg={formatNum(stats.stress.avg)} trend={periodTrend?.stress} higherIsBetter={false} />
-                  <StatCard title="HRV" avg={`${formatNum(stats.hrv.avg, 0)} ms`} trend={periodTrend?.hrv} />
-                </div>
-
-                {/* Chart Selector */}
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(chartConfigs).map(([key, config]) => (
-                    <button
-                      key={key}
-                      onClick={() => setActiveChart(key)}
-                      className={`px-3 py-1 rounded text-sm transition-colors ${
-                        activeChart === key 
-                          ? 'bg-blue-600 text-white' 
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      {config.title}
-                    </button>
-                  ))}
-                </div>
+                {/* Stat cards double as the chart selector */}
+                {(() => {
+                  const cards = [
+                    { key: 'score', title: 'Sleep Score', avg: formatNum(stats.sleepScore.avg, 0), trend: periodTrend?.sleepScore },
+                    { key: 'duration', title: 'Duration', avg: `${formatNum(stats.duration.avg)} hrs`, trend: periodTrend?.duration },
+                    { key: 'rem', title: 'REM Sleep', avg: `${formatNum(stats.rem.avg)} min`, trend: periodTrend?.rem },
+                    { key: 'deep', title: 'Deep Sleep', avg: `${formatNum(stats.deep.avg)} min`, trend: periodTrend?.deep },
+                    { key: 'respiration', title: 'Respiration', avg: `${formatNum(stats.respiration.avg)} brpm`, trend: periodTrend?.respiration, higherIsBetter: false },
+                    { key: 'spo2', title: 'SpO2 Low', avg: `${formatNum(stats.spo2.lowestAvg)}%`, trend: periodTrend?.spo2Low },
+                    { key: 'stress', title: 'Stress', avg: formatNum(stats.stress.avg), trend: periodTrend?.stress, higherIsBetter: false },
+                    { key: 'hrv', title: 'HRV', avg: `${formatNum(stats.hrv.avg, 0)} ms`, trend: periodTrend?.hrv },
+                    { key: 'bodyBattery', title: 'Body Battery', avg: formatNum(stats.bodyBattery.avg, 0), trend: periodTrend?.bodyBattery },
+                  ];
+                  return (
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      {cards.map(c => (
+                        <StatCard
+                          key={c.key}
+                          title={c.title}
+                          avg={c.avg}
+                          trend={c.trend}
+                          higherIsBetter={c.higherIsBetter !== false}
+                          active={activeChart === c.key}
+                          onClick={() => setActiveChart(c.key)}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* Main Chart */}
                 <div className="bg-gray-900/50 rounded-lg p-4 relative transition-all" style={{ animation: syncing ? 'sync-pulse 2s ease-in-out infinite' : 'none' }}>
@@ -1981,12 +1975,12 @@ function GarminSleepAnalyzer() {
                       {selectStart && selectEnd && (
                         <ReferenceArea x1={selectStart} x2={selectEnd} strokeOpacity={0.3} fill="#3b82f6" fillOpacity={0.3} />
                       )}
-                      {currentChart.refLine && <ReferenceLine y={currentChart.refLine} stroke="#6b7280" strokeDasharray="5 5" label={{ value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 }} />}
-                      {activeChart === 'duration' && <Bar dataKey="durationMet" stackId="duration" fill="#22c55e" name="Sleep Need Met" tooltipType="none" isAnimationActive={false} />}
-                      {activeChart === 'duration' && <Bar dataKey="durationUnmet" stackId="duration" fill="#3b82f6" name="Sleep Duration" tooltipType="none" isAnimationActive={false} />}
-                      {activeChart === 'duration' && <Bar dataKey="needGap" stackId="duration" fill="#6b7280" opacity={0.5} name="Sleep Need" tooltipType="none" isAnimationActive={false} />}
-                      {activeChart !== 'duration' && <Bar dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} isAnimationActive={false} />}
-                      <Line type="linear" dataKey="trend" stroke="#ffffff" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Trend" tooltipType="none" isAnimationActive={false} />
+                      <ReferenceLine key="refline" y={currentChart.refLine ?? 0} ifOverflow="hidden" stroke={currentChart.refLine ? '#6b7280' : 'none'} strokeDasharray="5 5" label={currentChart.refLine ? { value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 } : undefined} />
+                      {activeChart === 'duration' && <Bar dataKey="durationMet" stackId="duration" fill="#22c55e" opacity={0.4} name="Sleep Need Met" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
+                      {activeChart === 'duration' && <Bar dataKey="durationUnmet" stackId="duration" fill="#3b82f6" opacity={0.4} name="Sleep Duration" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
+                      {activeChart === 'duration' && <Bar dataKey="needGap" stackId="duration" fill="#6b7280" opacity={0.3} name="Sleep Need" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
+                      {activeChart !== 'duration' && <Bar key="metric-bar" dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} animationDuration={250} animationEasing="ease-in-out" />}
+                      <Line key="trend-line" type="linear" dataKey="trend" stroke="#ffffff" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Trend" tooltipType="none" isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                   <p className="text-xs text-gray-500 text-center mt-1">
@@ -2267,26 +2261,25 @@ function GarminSleepAnalyzer() {
   );
 }
 
-function StatCard({ title, avg, trend, higherIsBetter = true }) {
+function StatCard({ title, avg, trend, higherIsBetter = true, active = false, onClick }) {
   let pct = null;
   let isGood = null;
-  let changeText = null;
 
   if (trend?.first != null && trend?.second != null) {
     const diff = trend.second - trend.first;
     pct = trend.first !== 0 ? ((diff / trend.first) * 100) : 0;
     if (Math.abs(pct) < 1) { pct = null; }
     else { isGood = higherIsBetter ? diff > 0 : diff < 0; }
-
-    // Build "start → end" from the same regression values
-    const unit = String(avg).replace(/[\d.\-]/g, '').trim();
-    const decimals = String(avg).includes('.') ? (String(avg).split('.')[1] || '').replace(/[^\d]/g, '').length : 0;
-    const fmt = (v) => `${v.toFixed(decimals)}${unit ? ' ' + unit : ''}`;
-    changeText = `${fmt(trend.first)} → ${fmt(trend.second)}`;
   }
 
+  const accentColor = isGood == null ? '#4b5563' : isGood ? '#10b981' : '#ef4444';
+
   return (
-    <div className="bg-gray-900/50 rounded-lg p-3">
+    <button
+      onClick={onClick}
+      className={`text-left rounded-lg p-3 border transition-colors ${active ? 'bg-gray-900' : 'bg-gray-900/50 border-transparent hover:bg-gray-900/80'}`}
+      style={active ? { borderColor: accentColor } : undefined}
+    >
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-xs text-gray-400">{title}</h3>
         {pct != null && (
@@ -2296,10 +2289,7 @@ function StatCard({ title, avg, trend, higherIsBetter = true }) {
         )}
       </div>
       <p className="text-2xl font-bold tracking-tight">{avg}</p>
-      {changeText && (
-        <p className="text-xs text-gray-500 mt-1">{changeText}</p>
-      )}
-    </div>
+    </button>
   );
 }
 
