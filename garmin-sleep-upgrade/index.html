@@ -218,7 +218,6 @@ function GarminSleepAnalyzer() {
   const [period2, setPeriod2] = useState({ start: '', end: '' });
   
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [compareType, setCompareType] = useState('previous');
   const [activePreset, setActivePreset] = useState(null);
   const [editingPeriod, setEditingPeriod] = useState(null);
   const [dragPeriod, setDragPeriod] = useState({ dragging: false, startX: 0, startDate: '', currentDate: '' });
@@ -1526,7 +1525,6 @@ function GarminSleepAnalyzer() {
                       p1Start.setDate(p1Start.getDate() - days + 1);
                       setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
                       setPeriod2({ start: startStr, end: availableDates.max });
-                      setCompareType('previous');
                     }
                     setShowRangeMenu(false);
                   };
@@ -1543,7 +1541,6 @@ function GarminSleepAnalyzer() {
                       midMinus1.setDate(midMinus1.getDate() - 1);
                       setPeriod1({ start: availableDates.min, end: midMinus1.toISOString().split('T')[0] });
                       setPeriod2({ start: midStr, end: availableDates.max });
-                      setCompareType('custom');
                     }
                     setShowRangeMenu(false);
                   };
@@ -1564,10 +1561,17 @@ function GarminSleepAnalyzer() {
                       newEnd.setDate(newEnd.getDate() + daysDiff - 1);
                       if (newEnd > new Date(availableDates.max)) return;
                     }
-                    setDateRange({
-                      start: newStart.toISOString().split('T')[0],
-                      end: newEnd.toISOString().split('T')[0]
-                    });
+                    const newStartStr = newStart.toISOString().split('T')[0];
+                    const newEndStr = newEnd.toISOString().split('T')[0];
+                    setDateRange({ start: newStartStr, end: newEndStr });
+                    if (compareMode) {
+                      const p1End = new Date(newStart);
+                      p1End.setDate(p1End.getDate() - 1);
+                      const p1Start = new Date(p1End);
+                      p1Start.setDate(p1Start.getDate() - daysDiff + 1);
+                      setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
+                      setPeriod2({ start: newStartStr, end: newEndStr });
+                    }
                     setActivePreset(null);
                   };
 
@@ -1642,7 +1646,9 @@ function GarminSleepAnalyzer() {
                   );
                 })()}
 
-                {/* View Mode Toggle */}
+                {/* View Mode Toggle -- inert while comparing: the overlay chart
+                    plots each period's raw timeSeries, not the aggregated one. */}
+                {!compareMode && (
                 <div className="flex bg-gray-700 rounded overflow-hidden">
                   {['days', 'weeks', 'months'].map(mode => (
                     <button
@@ -1656,6 +1662,7 @@ function GarminSleepAnalyzer() {
                     </button>
                   ))}
                 </div>
+                )}
 
                 {/* Compare Toggle */}
                 <button
@@ -1672,7 +1679,6 @@ function GarminSleepAnalyzer() {
                         end: p1End.toISOString().split('T')[0]
                       });
                       setPeriod2({ start: dateRange.start, end: dateRange.end });
-                      setCompareType('previous');
                     }
                     setCompareMode(!compareMode);
                   }}
@@ -1723,89 +1729,6 @@ function GarminSleepAnalyzer() {
               {/* Compare Options */}
               {compareMode && (
                 <div className="mt-2 pt-2 border-t border-gray-700 space-y-3">
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="text-gray-500">Quick:</span>
-                    
-                    {[
-                      { label: '7d', days: 7 },
-                      { label: '30d', days: 30 },
-                      { label: '90d', days: 90 },
-                      { label: '6mo', days: 182 },
-                      { label: '1y', days: 365 },
-                    ].map(preset => (
-                      <button
-                        key={preset.label}
-                        onClick={() => {
-                          setCompareType(`${preset.days}d`);
-                          const end = new Date(availableDates.max);
-                          const start = new Date(end);
-                          start.setDate(start.getDate() - preset.days + 1);
-                          setPeriod2({ start: start.toISOString().split('T')[0], end: availableDates.max });
-                          const p1End = new Date(start);
-                          p1End.setDate(p1End.getDate() - 1);
-                          const p1Start = new Date(p1End);
-                          p1Start.setDate(p1Start.getDate() - preset.days + 1);
-                          setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
-                          setDateRange({ start: start.toISOString().split('T')[0], end: availableDates.max });
-                          setActivePreset(preset.label);
-                        }}
-                        className={`px-2 py-1 rounded transition-colors ${
-                          compareType === `${preset.days}d` ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                    
-                    <span className="text-gray-700 mx-1">|</span>
-                    
-                    <span className="text-gray-500">Compare to:</span>
-                    <button
-                      onClick={() => {
-                        setCompareType('previous');
-                        const daysDiff = Math.round((new Date(period2.end) - new Date(period2.start)) / (1000 * 60 * 60 * 24));
-                        const p1End = new Date(period2.start);
-                        p1End.setDate(p1End.getDate() - 1);
-                        const p1Start = new Date(p1End);
-                        p1Start.setDate(p1Start.getDate() - daysDiff);
-                        setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
-                      }}
-                      className={`px-2 py-1 rounded transition-colors ${
-                        compareType === 'previous' || compareType.endsWith('d') ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      Prior
-                    </button>
-                    {(() => {
-                      const yoyStartDate = new Date(period2.start);
-                      yoyStartDate.setFullYear(yoyStartDate.getFullYear() - 1);
-                      const yoyEndDate = new Date(period2.end);
-                      yoyEndDate.setFullYear(yoyEndDate.getFullYear() - 1);
-                      const hasYoyData = yoyStartDate >= new Date(availableDates.min) && yoyEndDate >= new Date(availableDates.min);
-                      
-                      return (
-                        <button
-                          onClick={() => {
-                            if (!hasYoyData) return;
-                            setCompareType('year');
-                            setPeriod1({ start: yoyStartDate.toISOString().split('T')[0], end: yoyEndDate.toISOString().split('T')[0] });
-                          }}
-                          disabled={!hasYoyData}
-                          className={`px-2 py-1 rounded transition-colors ${
-                            !hasYoyData 
-                              ? 'bg-gray-800 text-gray-600 cursor-not-allowed' 
-                              : compareType === 'year' 
-                                ? 'bg-purple-600 text-white' 
-                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                          }`}
-                          title={!hasYoyData ? 'Not enough historical data for year-over-year comparison' : 'Compare to same period last year'}
-                        >
-                          YoY
-                        </button>
-                      );
-                    })()}
-                  </div>
-
                   {/* Timeline with drag-to-select */}
                   <div className="bg-gray-900/50 rounded-lg p-3">
                     <div className="text-xs text-gray-500 mb-2">Drag on timeline to select period • Comparison auto-calculated</div>
@@ -1843,7 +1766,6 @@ function GarminSleepAnalyzer() {
                           const p1Start = new Date(p1End);
                           p1Start.setDate(p1Start.getDate() - daysDiff);
                           setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
-                          setCompareType('previous');
                         }
                         setDragPeriod({ dragging: false, startX: 0, startDate: '', currentDate: '' });
                       }}
@@ -1858,12 +1780,17 @@ function GarminSleepAnalyzer() {
                         const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000*60*60*24));
                         const p1StartDay = Math.round((new Date(period1.start) - new Date(availableDates.min)) / (1000*60*60*24));
                         const p1EndDay = Math.round((new Date(period1.end) - new Date(availableDates.min)) / (1000*60*60*24));
-                        const p1StartPct = Math.max(0, (p1StartDay / totalDays) * 100);
-                        const p1EndPct = Math.min(100, (p1EndDay / totalDays) * 100);
+                        // Each band covers whole days, so it has to reach the END of its
+                        // last day: the span is totalDays + 1 and the right edge is
+                        // endDay + 1. Without this every band fell one day short and two
+                        // contiguous periods rendered with a day-wide gap between them.
+                        const spanDays = totalDays + 1;
+                        const p1StartPct = Math.max(0, (p1StartDay / spanDays) * 100);
+                        const p1EndPct = Math.min(100, ((p1EndDay + 1) / spanDays) * 100);
                         return (
                           <div 
                             className="absolute h-full bg-gray-500/60 rounded"
-                            style={{ left: `${p1StartPct}%`, width: `${p1EndPct - p1StartPct}%` }}
+                            style={{ left: `${p1StartPct}%`, width: `calc(${p1EndPct - p1StartPct}% - 2px)` }}
                           />
                         );
                       })()}
@@ -1873,12 +1800,13 @@ function GarminSleepAnalyzer() {
                         const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000*60*60*24));
                         const p2StartDay = Math.round((new Date(period2.start) - new Date(availableDates.min)) / (1000*60*60*24));
                         const p2EndDay = Math.round((new Date(period2.end) - new Date(availableDates.min)) / (1000*60*60*24));
-                        const p2StartPct = Math.max(0, (p2StartDay / totalDays) * 100);
-                        const p2EndPct = Math.min(100, (p2EndDay / totalDays) * 100);
+                        const spanDays = totalDays + 1;
+                        const p2StartPct = Math.max(0, (p2StartDay / spanDays) * 100);
+                        const p2EndPct = Math.min(100, ((p2EndDay + 1) / spanDays) * 100);
                         return (
                           <div 
                             className="absolute h-full bg-blue-500/70 rounded"
-                            style={{ left: `${p2StartPct}%`, width: `${p2EndPct - p2StartPct}%` }}
+                            style={{ left: `${p2StartPct}%`, width: `calc(${p2EndPct - p2StartPct}% - 2px)` }}
                           />
                         );
                       })()}
@@ -1889,14 +1817,15 @@ function GarminSleepAnalyzer() {
                         const dates = [dragPeriod.startDate, dragPeriod.currentDate].sort();
                         const startDay = Math.round((new Date(dates[0]) - new Date(availableDates.min)) / (1000*60*60*24));
                         const endDay = Math.round((new Date(dates[1]) - new Date(availableDates.min)) / (1000*60*60*24));
-                        const startPct = (startDay / totalDays) * 100;
-                        const endPct = (endDay / totalDays) * 100;
+                        const spanDays = totalDays + 1;
+                        const startPct = (startDay / spanDays) * 100;
+                        const endPct = ((endDay + 1) / spanDays) * 100;
                         const dayCount = endDay - startDay + 1;
                         return (
                           <>
                             <div 
                               className="absolute h-full bg-blue-400/90 rounded ring-2 ring-blue-300"
-                              style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
+                              style={{ left: `${startPct}%`, width: `calc(${endPct - startPct}% - 2px)` }}
                             />
                             <div 
                               className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-900 px-2 py-1 rounded text-xs font-medium text-white whitespace-nowrap z-30"
@@ -2040,87 +1969,29 @@ function GarminSleepAnalyzer() {
             {/* Comparison Results */}
             {compareMode && comparisonStats?.period1 && comparisonStats?.period2 && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <ComparisonCard 
-                    title="Sleep Score"
-                    value1={comparisonStats.period1.sleepScore?.avg}
-                    value2={comparisonStats.period2.sleepScore?.avg}
-                    format={v => formatNum(v, 0)}
-                    unit=""
-                    higherIsBetter={true}
-                  />
-                  <ComparisonCard 
-                    title="Duration"
-                    value1={comparisonStats.period1.duration?.avg}
-                    value2={comparisonStats.period2.duration?.avg}
-                    format={v => formatNum(v, 1)}
-                    unit=" hrs"
-                    higherIsBetter={true}
-                  />
-                  <ComparisonCard 
-                    title="REM Sleep"
-                    value1={comparisonStats.period1.rem?.avg}
-                    value2={comparisonStats.period2.rem?.avg}
-                    format={v => formatNum(v, 0)}
-                    unit=" min"
-                    higherIsBetter={true}
-                  />
-                  <ComparisonCard 
-                    title="Deep Sleep"
-                    value1={comparisonStats.period1.deep?.avg}
-                    value2={comparisonStats.period2.deep?.avg}
-                    format={v => formatNum(v, 0)}
-                    unit=" min"
-                    higherIsBetter={true}
-                  />
-                  <ComparisonCard 
-                    title="Respiration"
-                    value1={comparisonStats.period1.respiration?.avg}
-                    value2={comparisonStats.period2.respiration?.avg}
-                    format={v => formatNum(v, 1)}
-                    unit=" brpm"
-                    higherIsBetter={false}
-                  />
-                  <ComparisonCard 
-                    title="Lowest Resp"
-                    value1={comparisonStats.period1.respiration?.lowestAvg}
-                    value2={comparisonStats.period2.respiration?.lowestAvg}
-                    format={v => formatNum(v, 1)}
-                    unit=" brpm"
-                    higherIsBetter={false}
-                  />
-                  <ComparisonCard 
-                    title="SpO2 (Lowest)"
-                    value1={comparisonStats.period1.spo2?.lowestAvg}
-                    value2={comparisonStats.period2.spo2?.lowestAvg}
-                    format={v => formatNum(v, 1)}
-                    unit="%"
-                    higherIsBetter={true}
-                  />
-                  <ComparisonCard 
-                    title="Stress"
-                    value1={comparisonStats.period1.stress?.avg}
-                    value2={comparisonStats.period2.stress?.avg}
-                    format={v => formatNum(v, 1)}
-                    unit=""
-                    higherIsBetter={false}
-                  />
-                </div>
-
-                {/* Chart Selector for comparison */}
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(chartConfigs).map(([key, config]) => (
-                    <button
-                      key={key}
-                      onClick={() => setActiveChart(key)}
-                      className={`px-3 py-1 rounded text-sm transition-colors ${
-                        activeChart === key
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
-                    >
-                      {config.title}
-                    </button>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    { key: 'score', title: 'Sleep Score', pick: s => s.sleepScore?.avg, format: v => formatNum(v, 0), unit: '' },
+                    { key: 'duration', title: 'Duration', pick: s => s.duration?.avg, format: v => formatNum(v, 1), unit: ' hrs' },
+                    { key: 'rem', title: 'REM Sleep', pick: s => s.rem?.avg, format: v => formatNum(v, 0), unit: ' min' },
+                    { key: 'deep', title: 'Deep Sleep', pick: s => s.deep?.avg, format: v => formatNum(v, 0), unit: ' min' },
+                    { key: 'respiration', title: 'Respiration', pick: s => s.respiration?.avg, format: v => formatNum(v, 1), unit: ' brpm', higherIsBetter: false },
+                    { key: 'spo2', title: 'SpO2 Low', pick: s => s.spo2?.lowestAvg, format: v => formatNum(v, 1), unit: '%' },
+                    { key: 'stress', title: 'Stress', pick: s => s.stress?.avg, format: v => formatNum(v, 1), unit: '' },
+                    { key: 'hrv', title: 'HRV', pick: s => s.hrv?.avg, format: v => formatNum(v, 0), unit: ' ms' },
+                    { key: 'bodyBattery', title: 'Body Battery', pick: s => s.bodyBattery?.avg, format: v => formatNum(v, 0), unit: '' },
+                  ].map(c => (
+                    <ComparisonCard
+                      key={c.key}
+                      title={c.title}
+                      value1={c.pick(comparisonStats.period1)}
+                      value2={c.pick(comparisonStats.period2)}
+                      format={c.format}
+                      unit={c.unit}
+                      higherIsBetter={c.higherIsBetter !== false}
+                      active={activeChart === c.key}
+                      onClick={() => setActiveChart(c.key)}
+                    />
                   ))}
                 </div>
 
@@ -2138,7 +2009,7 @@ function GarminSleepAnalyzer() {
                       <h2 className="text-lg font-semibold mb-1 text-blue-300">
                         {currentChart.title} — Period Overlay
                       </h2>
-                      <p className="text-xs text-gray-500 mb-3">Day-by-day overlay aligned from start of each period. Switch metrics using the tabs below.</p>
+                      <p className="text-xs text-gray-500 mb-3">Day-by-day overlay aligned from start of each period. Pick a card above to change the metric.</p>
                       <ResponsiveContainer width="100%" height={300}>
                         <ComposedChart data={overlaid}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -2442,7 +2313,6 @@ function GarminSleepAnalyzer() {
                               end: selectionStats.endDate 
                             });
                             setCompareMode(true);
-                            setCompareType('custom');
                             setActivePreset(null);
                             setSelectionStats(null);
                             setSelectStart(null);
@@ -2675,7 +2545,7 @@ function StatCard({ title, avg, trend, higherIsBetter = true, active = false, on
   );
 }
 
-function ComparisonCard({ title, value1, value2, format, unit, higherIsBetter }) {
+function ComparisonCard({ title, value1, value2, format, unit, higherIsBetter, active = false, onClick }) {
   const v1 = value1 ?? 0;
   const v2 = value2 ?? 0;
   const diff = v2 - v1;
@@ -2690,9 +2560,16 @@ function ComparisonCard({ title, value1, value2, format, unit, higherIsBetter })
   const changeColor = noChange ? 'text-gray-500' : isGood ? 'text-green-400' : 'text-red-400';
   
   const selectedColor = noChange ? 'text-gray-300' : isGood ? 'text-green-400' : 'text-red-400';
+
+  // Matches StatCard: the active card is outlined in its own trend colour.
+  const accentColor = noChange ? '#4b5563' : isGood ? '#10b981' : '#ef4444';
   
   return (
-    <div className="bg-gray-900/50 rounded-lg p-3">
+    <button
+      onClick={onClick}
+      className={`w-full text-left rounded-lg p-3 border transition-colors ${active ? 'bg-gray-900' : 'bg-gray-900/50 border-transparent hover:bg-gray-900/80'}`}
+      style={active ? { borderColor: accentColor } : undefined}
+    >
       <h3 className="text-xs font-medium text-gray-400 mb-2">{title}</h3>
       
       <div className="flex items-center justify-between gap-2">
@@ -2708,7 +2585,7 @@ function ComparisonCard({ title, value1, value2, format, unit, higherIsBetter })
         
         <span className={`text-lg font-bold ${selectedColor}`}>{format(v2)}{unit}</span>
       </div>
-    </div>
+    </button>
   );
 }
 
