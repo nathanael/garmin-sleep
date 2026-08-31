@@ -83,10 +83,20 @@ const METRIC_DIRECTION = {
   resp: 'center',    // a band metric: both extremes are worse than your normal
 };
 
+function round1(v) {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1).replace(/\.0$/, '');
+}
+
 function ordinal(n) {
   const rem100 = n % 100;
   if (rem100 >= 11 && rem100 <= 13) return 'th';
   return { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th';
+}
+
+function quantile(sortedAsc, p) {
+  const i = (sortedAsc.length - 1) * p;
+  const lo = Math.floor(i), hi = Math.min(lo + 1, sortedAsc.length - 1);
+  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (i - lo);
 }
 
 function personalStanding(metric, value, series) {
@@ -94,18 +104,26 @@ function personalStanding(metric, value, series) {
   const xs = series.filter(v => v != null && !isNaN(v));
   if (xs.length < BASELINE_MIN) return null; // too little history to rank against
   const dir = METRIC_DIRECTION[metric] || 'higher';
+  const asc = [...xs].sort((a, b) => a - b);
   let pct;
   if (dir === 'center') {
-    const asc = [...xs].sort((a, b) => a - b);
-    const median = asc[Math.floor(asc.length / 2)];
-    const spread = (asc[asc.length - 1] - asc[0]) || 1;
-    pct = 100 - (Math.abs(value - median) / spread) * 200;
+    const median = quantile(asc, 0.5);
+    const spread = (quantile(asc, 0.9) - quantile(asc, 0.1)) || 1;
+    pct = 100 - (Math.abs(value - median) / spread) * 100;
   } else {
-    pct = (xs.filter(v => v < value).length / xs.length) * 100;
+    // Position within the 10th-90th percentile of your own nights rather than a
+    // rank. Ranking over-amplifies tight distributions -- SpO2 only ever spans
+    // 93-97, and ranking stretched those five values across the whole dial.
+    // Clipping at p10/p90 rather than min/max keeps one freak night from
+    // rescaling everything else.
+    const lo = quantile(asc, 0.10), hi = quantile(asc, 0.90);
+    pct = ((value - lo) / ((hi - lo) || 1)) * 100;
     if (dir === 'lower') pct = 100 - pct;
   }
   pct = Math.max(0, Math.min(100, pct));
-  const color = pct >= 67 ? '#10b981' : pct >= 33 ? '#eab308' : '#ef4444';
+  // A night near your own median is normal, not a warning. Amber and red are
+  // reserved for genuinely poor nights for you.
+  const color = pct >= 70 ? '#10b981' : pct >= 35 ? '#9ca3af' : pct >= 15 ? '#eab308' : '#ef4444';
 
   // Rank reads plainly where a percentile does not: "12th best of 85 nights"
   // needs no statistical vocabulary, and it phrases correctly for metrics where
@@ -124,7 +142,10 @@ function personalStanding(metric, value, series) {
     rank = xs.filter(v => v > value).length + 1;
     noun = 'best';
   }
-  return { pct, color, rank, noun, n: xs.length };
+  const band = dir === 'center'
+    ? [quantile(asc, 0.10), quantile(asc, 0.90)]
+    : [quantile(asc, 0.10), quantile(asc, 0.90)];
+  return { pct, color, rank, noun, n: xs.length, band };
 }
 
 const Donut = ({ value, max, pct: pctOverride, color, size = 68, stroke = 8, label, unit, tip }) => {
@@ -920,6 +941,12 @@ function GarminSleepAnalyzer() {
   // Sleep debt reads as a headline number, so drop a leading "0h" and say what
   // the figure means. Debt is a sum of shortfalls only -- nights you beat your
   // need contribute nothing and never offset a deficit.
+  // Three shared type styles across the hero and sleep-debt blocks, rather than
+  // a bespoke size and colour per line.
+  const T_LABEL = 'text-xs text-gray-500 uppercase tracking-wide';
+  const T_VALUE = 'text-3xl font-bold leading-none';
+  const T_SECONDARY = 'text-lg text-gray-300';
+
   const fmtDebt = (hours) => {
     if (hours == null || isNaN(hours)) return { value: '-', suffix: '' };
     const mins = Math.round(hours * 60);
@@ -1361,14 +1388,16 @@ function GarminSleepAnalyzer() {
               });
               // Baseline for the contributor rings: the user's own recent nights.
               const baseline = sorted.slice(-BASELINE_WINDOW).map(toNight);
-              const ring = (metric, key, value, max) => {
+              const ring = (metric, key, value, max, unit) => {
                 const st = personalStanding(metric, value, baseline.map(n => n[key]));
                 return st
                   ? { pct: st.pct, color: st.color,
                       tip: [st.rank === 1
-                              ? (st.noun === 'closest to your normal' ? 'Closest to your normal' : `Your ${st.noun}`)
-                              : `${st.rank}${ordinal(st.rank)} ${st.noun}`,
-                            `${st.rank === 1 ? 'across' : 'of'} your last ${st.n} nights`] }
+                              ? (st.noun === 'closest to your normal'
+                                  ? `Closest to your normal across ${st.n} nights`
+                                  : `Your ${st.noun} of ${st.n} nights`)
+                              : `${st.rank}${ordinal(st.rank)} ${st.noun} of ${st.n} nights`,
+                            `usual range ${round1(st.band[0])}–${round1(st.band[1])}${unit ? ' ' + unit : ''}`] }
                   : { max, color: qualify(metric, value).color,
                       tip: ['Not enough history yet', 'using general guidance'] };
               };
@@ -1379,6 +1408,12 @@ function GarminSleepAnalyzer() {
                 if (d.duration == null || d.sleepNeed == null) return sum;
                 return sum + Math.max(0, d.sleepNeed - d.duration);
               }, 0);
+              // Green means no debt at all. A small deficit is neither good nor
+              // alarming, so it reads neutral rather than congratulating a shortfall.
+              const debtColor = debtHrs <= 0 ? 'text-green-400'
+                : debtHrs < 2 ? 'text-gray-300'
+                : debtHrs < 5 ? 'text-yellow-400'
+                : 'text-red-400';
               const scoreQ = qualify('score', last.score);
               return (
                 <div className="bg-gray-800 rounded-lg p-4">
@@ -1394,11 +1429,11 @@ function GarminSleepAnalyzer() {
                             strokeLinecap="round" />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="text-4xl font-bold text-white leading-none">{last.score != null ? Math.round(last.score) : '—'}</div>
+                          <div className={`${T_VALUE} text-4xl text-white`}>{last.score != null ? Math.round(last.score) : '—'}</div>
                         </div>
                       </div>
                       <div>
-                        <div className="font-mono text-sm select-none flex items-center gap-2 mb-0.5">
+                        <div className="font-mono text-xs select-none flex items-center gap-2 mb-0.5">
                           <button
                             onClick={() => setHeroOffset(o => Math.min(sorted.length - 1, o + 1))}
                             disabled={heroOffset >= sorted.length - 1}
@@ -1417,19 +1452,19 @@ function GarminSleepAnalyzer() {
                             className="text-gray-600 hover:text-gray-300 disabled:text-gray-700 disabled:hover:text-gray-700 disabled:cursor-default transition-colors"
                           >{'>'}</button>
                         </div>
-                        <div className="text-xs text-gray-500 uppercase tracking-wide">
+                        <div className={T_LABEL}>
                           {heroOffset === 0 ? 'Last night' : new Date(last.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
                         </div>
-                        <div className="text-2xl font-bold" style={{ color: scoreQ.color }}>{scoreQ.label}</div>
-                        <div className="text-lg text-gray-300 mt-1">{fmtHM(last.duration)}</div>
+                        <div className={`${T_SECONDARY} font-bold`} style={{ color: scoreQ.color }}>{scoreQ.label}</div>
+                        <div className={`${T_SECONDARY} mt-0.5`}>{fmtHM(last.duration)}</div>
                       </div>
                     </div>
                     {/* RISE-style sleep debt */}
                     <div className="flex flex-col justify-center">
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Sleep debt <span className="text-gray-600 normal-case">· last 14 nights</span></div>
-                      <div className={`text-3xl font-bold mb-2 ${debtHrs > 5 ? 'text-red-400' : debtHrs > 2 ? 'text-yellow-400' : 'text-green-400'}`}>
+                      <div className={`${T_LABEL} mb-1`}>Sleep debt · last 14 nights</div>
+                      <div className={`${T_VALUE} mb-2 ${debtColor}`}>
                         {fmtDebt(debtHrs).value}
-                        {fmtDebt(debtHrs).suffix && <span className="text-base font-normal text-gray-400 ml-2">{fmtDebt(debtHrs).suffix}</span>}
+                        {fmtDebt(debtHrs).suffix && <span className={`${T_LABEL} ml-2`}>{fmtDebt(debtHrs).suffix}</span>}
                       </div>
                       <div className="flex gap-1 h-7">
                         {nights.map((d, i) => {
@@ -1449,13 +1484,13 @@ function GarminSleepAnalyzer() {
                   {/* Oura-style contributor rings */}
                   <div className="pt-4">
                     <div className="flex flex-wrap gap-3 justify-around">
-                      <Donut value={last.duration} {...ring('duration', 'duration', last.duration, 9)} label="Duration" unit="hrs" />
-                      <Donut value={last.rem} {...ring('rem', 'rem', last.rem, 120)} label="REM" unit="min" />
-                      <Donut value={last.deep} {...ring('deep', 'deep', last.deep, 90)} label="Deep" unit="min" />
-                      <Donut value={last.hrv} {...ring('hrv', 'hrv', last.hrv, 60)} label="HRV" unit="ms" />
-                      <Donut value={last.restingHr} {...ring('rhr', 'restingHr', last.restingHr, 80)} label="RHR" unit="bpm" />
-                      <Donut value={last.respiration} {...ring('resp', 'respiration', last.respiration, 25)} label="Resp" unit="brpm" />
-                      <Donut value={last.spo2} {...ring('spo2', 'spo2', last.spo2, 100)} label="SpO2" unit="%" />
+                      <Donut value={last.duration} {...ring('duration', 'duration', last.duration, 9, 'hrs')} label="Duration" unit="hrs" />
+                      <Donut value={last.rem} {...ring('rem', 'rem', last.rem, 120, 'min')} label="REM" unit="min" />
+                      <Donut value={last.deep} {...ring('deep', 'deep', last.deep, 90, 'min')} label="Deep" unit="min" />
+                      <Donut value={last.hrv} {...ring('hrv', 'hrv', last.hrv, 60, 'ms')} label="HRV" unit="ms" />
+                      <Donut value={last.restingHr} {...ring('rhr', 'restingHr', last.restingHr, 80, 'bpm')} label="RHR" unit="bpm" />
+                      <Donut value={last.respiration} {...ring('resp', 'respiration', last.respiration, 25, 'brpm')} label="Resp" unit="brpm" />
+                      <Donut value={last.spo2} {...ring('spo2', 'spo2', last.spo2, 100, '%')} label="SpO2" unit="%" />
                     </div>
                   </div>
                 </div>
