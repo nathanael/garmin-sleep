@@ -10,3 +10,5 @@ firebase-admin.json
 .config.json
 .superpowers/
 .venv
+server.log
+server-error.log
