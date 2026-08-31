@@ -47,7 +47,7 @@ function GarminSleepAnalyzer() {
   const [loginState, setLoginState] = useState('idle'); // idle, loading, mfa, error
   const [loginError, setLoginError] = useState('');
   const [error, setError] = useState(null);
-  const [activeChart, setActiveChart] = useState('score');
+  const [activeChart, setActiveChart] = useState('rem');
   const [savedFiles, setSavedFiles] = useState([]);
   const [currentFileName, setCurrentFileName] = useState('');
   const [uploadExpanded, setUploadExpanded] = useState(true);
