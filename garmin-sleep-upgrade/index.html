@@ -70,14 +70,49 @@ function useCountUp(target, ms = 400) {
   return shown;
 }
 
-const Donut = ({ value, max, color, size = 68, stroke = 8, label, unit }) => {
+// Where tonight sits within your own recent nights, rather than against a
+// generic ceiling. 44ms of HRV means little in the abstract; against your own
+// 85 nights it is the 84th percentile. Arc and colour derive from this single
+// number, so they cannot disagree the way a fixed max and a separate threshold
+// table did.
+const BASELINE_MIN = 14;
+const BASELINE_WINDOW = 90;
+const METRIC_DIRECTION = {
+  hrv: 'higher', duration: 'higher', rem: 'higher', deep: 'higher', spo2: 'higher',
+  rhr: 'lower',      // a lower resting heart rate is better
+  resp: 'center',    // a band metric: both extremes are worse than your normal
+};
+
+function personalStanding(metric, value, series) {
+  if (value == null || isNaN(value)) return null;
+  const xs = series.filter(v => v != null && !isNaN(v));
+  if (xs.length < BASELINE_MIN) return null; // too little history to rank against
+  const dir = METRIC_DIRECTION[metric] || 'higher';
+  let pct;
+  if (dir === 'center') {
+    const asc = [...xs].sort((a, b) => a - b);
+    const median = asc[Math.floor(asc.length / 2)];
+    const spread = (asc[asc.length - 1] - asc[0]) || 1;
+    pct = 100 - (Math.abs(value - median) / spread) * 200;
+  } else {
+    pct = (xs.filter(v => v < value).length / xs.length) * 100;
+    if (dir === 'lower') pct = 100 - pct;
+  }
+  pct = Math.max(0, Math.min(100, pct));
+  const color = pct >= 67 ? '#10b981' : pct >= 33 ? '#eab308' : '#ef4444';
+  return { pct, color };
+}
+
+const Donut = ({ value, max, pct: pctOverride, color, size = 68, stroke = 8, label, unit, title }) => {
   const shown = useCountUp(typeof value === 'number' ? value : null);
-  const pct = value == null || max == null ? 0 : Math.max(0, Math.min(1, value / max));
+  const pct = pctOverride != null
+    ? Math.max(0, Math.min(1, pctOverride / 100))
+    : (value == null || max == null ? 0 : Math.max(0, Math.min(1, value / max)));
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const cx = size / 2;
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center gap-1" title={title}>
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
           <circle cx={cx} cy={cx} r={r} fill="none" stroke="#374151" strokeWidth={stroke} />
@@ -1269,6 +1304,15 @@ function GarminSleepAnalyzer() {
                 spo2: d.spo2SleepSummary?.averageSPO2,
                 sleepNeed: d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null,
               });
+              // Baseline for the contributor rings: the user's own recent nights.
+              const baseline = sorted.slice(-BASELINE_WINDOW).map(toNight);
+              const ring = (metric, key, value, max) => {
+                const st = personalStanding(metric, value, baseline.map(n => n[key]));
+                return st
+                  ? { pct: st.pct, color: st.color,
+                      title: `${Math.round(st.pct)}th percentile of your last ${baseline.length} nights` }
+                  : { max, color: qualify(metric, value).color, title: 'Not enough history yet — using general guidance' };
+              };
               // Debt is a rolling 14-night trend and does not follow the night stepper.
               const nights = sorted.slice(-14).map(toNight);
               const last = toNight(sorted[Math.max(0, sorted.length - 1 - heroOffset)]);
@@ -1343,13 +1387,13 @@ function GarminSleepAnalyzer() {
                   {/* Oura-style contributor rings */}
                   <div className="pt-4">
                     <div className="flex flex-wrap gap-3 justify-around">
-                      <Donut value={last.duration} max={9} label="Duration" unit="hrs" color={qualify('duration', last.duration).color} />
-                      <Donut value={last.rem} max={120} label="REM" unit="min" color={qualify('rem', last.rem).color} />
-                      <Donut value={last.deep} max={90} label="Deep" unit="min" color={qualify('deep', last.deep).color} />
-                      <Donut value={last.hrv} max={60} label="HRV" unit="ms" color={qualify('hrv', last.hrv).color} />
-                      <Donut value={last.restingHr} max={80} label="RHR" unit="bpm" color={qualify('rhr', last.restingHr).color} />
-                      <Donut value={last.respiration} max={25} label="Resp" unit="brpm" color={qualify('resp', last.respiration).color} />
-                      <Donut value={last.spo2} max={100} label="SpO2" unit="%" color={qualify('spo2', last.spo2).color} />
+                      <Donut value={last.duration} {...ring('duration', 'duration', last.duration, 9)} label="Duration" unit="hrs" />
+                      <Donut value={last.rem} {...ring('rem', 'rem', last.rem, 120)} label="REM" unit="min" />
+                      <Donut value={last.deep} {...ring('deep', 'deep', last.deep, 90)} label="Deep" unit="min" />
+                      <Donut value={last.hrv} {...ring('hrv', 'hrv', last.hrv, 60)} label="HRV" unit="ms" />
+                      <Donut value={last.restingHr} {...ring('rhr', 'restingHr', last.restingHr, 80)} label="RHR" unit="bpm" />
+                      <Donut value={last.respiration} {...ring('resp', 'respiration', last.respiration, 25)} label="Resp" unit="brpm" />
+                      <Donut value={last.spo2} {...ring('spo2', 'spo2', last.spo2, 100)} label="SpO2" unit="%" />
                     </div>
                   </div>
                 </div>
