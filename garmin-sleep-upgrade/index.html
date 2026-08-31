@@ -221,6 +221,60 @@ function GarminSleepAnalyzer() {
   const [activePreset, setActivePreset] = useState(null);
   const [editingPeriod, setEditingPeriod] = useState(null);
   const [dragPeriod, setDragPeriod] = useState({ dragging: false, startX: 0, startDate: '', currentDate: '' });
+  const timelineRef = React.useRef(null);
+  // The live drag lives in a ref as well as state: the window listeners below
+  // close over their first render, so state alone would go stale.
+  const dragInfoRef = React.useRef({ startDate: '', currentDate: '' });
+
+  // Clamped, so dragging past either end of the track pins to the first or last
+  // day instead of running off the edge.
+  const timelineDateAt = (clientX) => {
+    const el = timelineRef.current;
+    if (!el || !availableDates.min || !availableDates.max) return null;
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return null;
+    const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000*60*60*24));
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const d = new Date(availableDates.min);
+    d.setDate(d.getDate() + Math.round(pct * totalDays));
+    return d.toISOString().split('T')[0];
+  };
+
+  // Once a drag starts, the window owns it. Leaving the track -- sideways, or
+  // just moving off its 48px height -- used to throw the selection away.
+  useEffect(() => {
+    if (!dragPeriod.dragging) return;
+
+    const onMove = (e) => {
+      const currentDate = timelineDateAt(e.clientX);
+      if (!currentDate) return;
+      dragInfoRef.current.currentDate = currentDate;
+      setDragPeriod(prev => (prev.dragging ? { ...prev, currentDate } : prev));
+    };
+
+    const onUp = () => {
+      const { startDate, currentDate } = dragInfoRef.current;
+      if (startDate && currentDate) {
+        const dates = [startDate, currentDate].sort();
+        setPeriod2({ start: dates[0], end: dates[1] });
+        const daysDiff = Math.round((new Date(dates[1]) - new Date(dates[0])) / (1000*60*60*24));
+        const p1End = new Date(dates[0]);
+        p1End.setDate(p1End.getDate() - 1);
+        const p1Start = new Date(p1End);
+        p1Start.setDate(p1Start.getDate() - daysDiff);
+        setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
+      }
+      dragInfoRef.current = { startDate: '', currentDate: '' };
+      setDragPeriod({ dragging: false, startX: 0, startDate: '', currentDate: '' });
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [dragPeriod.dragging, availableDates.min, availableDates.max]);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [showRangeMenu, setShowRangeMenu] = useState(false);
 
@@ -1734,45 +1788,14 @@ function GarminSleepAnalyzer() {
                     <div className="text-xs text-gray-500 mb-2">Drag on timeline to select period • Comparison auto-calculated</div>
                     
                     <div 
+                      ref={timelineRef}
                       className="relative h-12 bg-gray-700 rounded cursor-crosshair select-none"
                       onMouseDown={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000*60*60*24));
-                        const dayIndex = Math.round(((e.clientX - rect.left) / rect.width) * totalDays);
-                        const d = new Date(availableDates.min);
-                        d.setDate(d.getDate() + dayIndex);
-                        const date = d.toISOString().split('T')[0];
+                        const date = timelineDateAt(e.clientX);
+                        if (!date) return;
+                        e.preventDefault();
+                        dragInfoRef.current = { startDate: date, currentDate: date };
                         setDragPeriod({ dragging: true, startX: e.clientX, startDate: date, currentDate: date });
-                      }}
-                      onMouseMove={(e) => {
-                        if (dragPeriod.dragging) {
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const totalDays = Math.round((new Date(availableDates.max) - new Date(availableDates.min)) / (1000*60*60*24));
-                          const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                          const dayIndex = Math.round(pct * totalDays);
-                          const d = new Date(availableDates.min);
-                          d.setDate(d.getDate() + dayIndex);
-                          const currentDate = d.toISOString().split('T')[0];
-                          setDragPeriod(prev => ({ ...prev, currentDate }));
-                        }
-                      }}
-                      onMouseUp={() => {
-                        if (dragPeriod.dragging && dragPeriod.startDate && dragPeriod.currentDate) {
-                          const dates = [dragPeriod.startDate, dragPeriod.currentDate].sort();
-                          setPeriod2({ start: dates[0], end: dates[1] });
-                          const daysDiff = Math.round((new Date(dates[1]) - new Date(dates[0])) / (1000*60*60*24));
-                          const p1End = new Date(dates[0]);
-                          p1End.setDate(p1End.getDate() - 1);
-                          const p1Start = new Date(p1End);
-                          p1Start.setDate(p1Start.getDate() - daysDiff);
-                          setPeriod1({ start: p1Start.toISOString().split('T')[0], end: p1End.toISOString().split('T')[0] });
-                        }
-                        setDragPeriod({ dragging: false, startX: 0, startDate: '', currentDate: '' });
-                      }}
-                      onMouseLeave={() => {
-                        if (dragPeriod.dragging) {
-                          setDragPeriod({ dragging: false, startX: 0, startDate: '', currentDate: '' });
-                        }
                       }}
                     >
                       {/* Period B (comparison - gray) */}
@@ -1789,7 +1812,7 @@ function GarminSleepAnalyzer() {
                         const p1EndPct = Math.min(100, ((p1EndDay + 1) / spanDays) * 100);
                         return (
                           <div 
-                            className="absolute h-full bg-gray-500/60 rounded"
+                            className="absolute h-full bg-purple-600/60 rounded"
                             style={{ left: `${p1StartPct}%`, width: `calc(${p1EndPct - p1StartPct}% - 2px)` }}
                           />
                         );
@@ -1844,8 +1867,8 @@ function GarminSleepAnalyzer() {
                     {/* Period summary */}
                     <div className="flex items-center justify-between mt-3 text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded bg-gray-500"></span>
-                        <span className="text-gray-400 font-medium">Comparison:</span>
+                        <span className="w-3 h-3 rounded bg-purple-600"></span>
+                        <span className="text-purple-300 font-medium">Comparison:</span>
                         <span className="text-gray-300">{period1.start} → {period1.end}</span>
                         <span className="text-gray-500 text-xs">
                           ({Math.round((new Date(period1.end) - new Date(period1.start)) / (1000*60*60*24)) + 1}d)
@@ -2026,7 +2049,7 @@ function GarminSleepAnalyzer() {
                           />
                           <Legend wrapperStyle={{ fontSize: 12 }} />
                           <ReferenceLine y={currentChart.refLine} stroke="#6b7280" strokeDasharray="5 5" />
-                          <Line type="monotone" dataKey="p1" name={`P1 (${period1.start} → ${period1.end})`} stroke="#6366f1" strokeWidth={2} dot={false} connectNulls />
+                          <Line type="monotone" dataKey="p1" name={`P1 (${period1.start} → ${period1.end})`} stroke="#a855f7" strokeWidth={2} dot={false} connectNulls />
                           <Line type="monotone" dataKey="p2" name={`P2 (${period2.start} → ${period2.end})`} stroke="#22d3ee" strokeWidth={2} dot={false} connectNulls />
                         </ComposedChart>
                       </ResponsiveContainer>
