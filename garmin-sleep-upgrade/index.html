@@ -200,14 +200,6 @@ function GarminSleepAnalyzer() {
   const [error, setError] = useState(null);
   const [activeChart, setActiveChart] = useState('score');
   const [heroOffset, setHeroOffset] = useState(0); // 0 = most recent night
-  // Duration renders three stacked bars where every other metric renders one, so
-  // switching across that boundary unmounts one set and mounts the other. Recharts
-  // grows a freshly mounted bar up from the baseline, which reads as a rebuild
-  // rather than a transition. Skip the animation on those two switches instead of
-  // faking a growth that isn't one.
-  const prevChartRef = React.useRef('score');
-  const crossedDurationBoundary = (prevChartRef.current === 'duration') !== (activeChart === 'duration');
-  React.useEffect(() => { prevChartRef.current = activeChart; }, [activeChart]);
   const [savedFiles, setSavedFiles] = useState([]);
   const [currentFileName, setCurrentFileName] = useState('');
   const [uploadExpanded, setUploadExpanded] = useState(true);
@@ -926,11 +918,20 @@ function GarminSleepAnalyzer() {
         ...d,
         trend: reg ? reg.intercept + reg.slope * i : undefined,
       };
-      if (activeChart === 'duration' && d.sleepNeed != null && d.duration != null) {
-        const met = d.duration >= d.sleepNeed;
-        base.durationMet = met ? d.duration : 0;
-        base.durationUnmet = met ? 0 : d.duration;
-        base.needGap = met ? 0 : d.sleepNeed - d.duration;
+      // Always emit three stack segments, even for single-series charts, so the
+      // three <Bar> elements stay mounted across every switch. Rendering them
+      // conditionally unmounted one set and mounted the other, and Recharts grows
+      // a freshly mounted bar from the baseline instead of morphing.
+      if (activeChart === 'duration') {
+        const met = d.sleepNeed != null && d.duration != null && d.duration >= d.sleepNeed;
+        const have = d.sleepNeed != null && d.duration != null;
+        base.seg1 = have && met ? d.duration : 0;
+        base.seg2 = have && !met ? d.duration : 0;
+        base.seg3 = have && !met ? d.sleepNeed - d.duration : 0;
+      } else {
+        base.seg1 = d[currentKey];
+        base.seg2 = 0;
+        base.seg3 = 0;
       }
       return base;
     });
@@ -2358,10 +2359,9 @@ function GarminSleepAnalyzer() {
                         <ReferenceArea x1={selectStart} x2={selectEnd} strokeOpacity={0.3} fill="#3b82f6" fillOpacity={0.3} />
                       )}
                       <ReferenceLine key="refline" y={currentChart.refLine ?? 0} ifOverflow="hidden" stroke={currentChart.refLine ? '#6b7280' : 'none'} strokeDasharray="5 5" label={currentChart.refLine ? { value: currentChart.refLabel, fill: '#6b7280', fontSize: 10 } : undefined} />
-                      {activeChart === 'duration' && <Bar isAnimationActive={!crossedDurationBoundary} dataKey="durationMet" stackId="duration" fill="#22c55e" opacity={0.4} name="Sleep Need Met" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
-                      {activeChart === 'duration' && <Bar isAnimationActive={!crossedDurationBoundary} dataKey="durationUnmet" stackId="duration" fill="#3b82f6" opacity={0.4} name="Sleep Duration" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
-                      {activeChart === 'duration' && <Bar isAnimationActive={!crossedDurationBoundary} dataKey="needGap" stackId="duration" fill="#6b7280" opacity={0.3} name="Sleep Need" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />}
-                      {activeChart !== 'duration' && <Bar key="metric-bar" isAnimationActive={!crossedDurationBoundary} dataKey={currentChart.dataKey} fill={currentChart.color} opacity={0.4} animationDuration={250} animationEasing="ease-in-out" />}
+                      <Bar key="seg1" dataKey="seg1" stackId="stack" fill={activeChart === 'duration' ? '#22c55e' : currentChart.color} opacity={0.4} name={activeChart === 'duration' ? 'Sleep Need Met' : currentChart.title} tooltipType={activeChart === 'duration' ? 'none' : undefined} animationDuration={250} animationEasing="ease-in-out" />
+                      <Bar key="seg2" dataKey="seg2" stackId="stack" fill="#3b82f6" opacity={0.4} name="Sleep Duration" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />
+                      <Bar key="seg3" dataKey="seg3" stackId="stack" fill="#6b7280" opacity={0.3} name="Sleep Need" tooltipType="none" animationDuration={250} animationEasing="ease-in-out" />
                       <Line key="trend-line" type="linear" dataKey="trend" stroke="#ffffff" strokeWidth={2} strokeDasharray="6 3" dot={false} name="Trend" tooltipType="none" isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
