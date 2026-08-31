@@ -43,12 +43,16 @@ RUNNER = sync_jobs.JobRunner(
 
 # /api/sleep field map: (source_column, sql_expression, output_alias).
 #
-# garmy's `localdb` schema has changed columns across versions (garmy 2.0.0
-# dropped avg_sleep_stress, sleep_score, lowest_spo2, and sleep_need_minutes
-# from daily_health_metrics), and will likely change again. build_sleep_query()
-# checks each source_column against the table's live schema and substitutes
-# NULL AS <alias> for anything missing, so the endpoint keeps returning its
-# usual response shape instead of raising sqlite3.OperationalError.
+# garmy's `localdb` schema has changed columns across versions (garmy 2.0.0's
+# SyncManager never creates avg_sleep_stress, sleep_score, lowest_spo2, or
+# sleep_need_minutes on daily_health_metrics), and will likely change again.
+# db.ensure_sleep_metric_columns() (called at startup, below) adds those four
+# back so sync.py's sleep-summary backfill has somewhere to write them, but
+# build_sleep_query() still defends against any of them -- or any future
+# garmy schema change -- being absent: it checks each source_column against
+# the table's live schema and substitutes NULL AS <alias> for anything
+# missing, so the endpoint keeps returning its usual response shape instead
+# of raising sqlite3.OperationalError.
 SLEEP_FIELDS = [
     ("metric_date", "metric_date", "calendarDate"),
     ("deep_sleep_hours", "CAST(ROUND(deep_sleep_hours * 3600) AS INTEGER)", "deepSleepSeconds"),
@@ -315,6 +319,14 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     import os
+
+    if DB_PATH.exists():
+        conn = db.connect(DB_PATH)
+        try:
+            db.ensure_sleep_metric_columns(conn)
+        finally:
+            conn.close()
+
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8484))
     server = ThreadingHTTPServer(("", port), Handler)
     print(f"Garmin Sleep Love → http://localhost:{port}")
