@@ -1033,15 +1033,20 @@ function GarminSleepAnalyzer() {
   const T_VALUE = 'text-3xl font-bold leading-none';
   const T_SECONDARY = 'text-lg text-gray-300';
 
+  // Positive hours mean a deficit, negative mean a surplus. Both are worth
+  // saying out loud: "37m short" while eleven of fourteen nights ran over is
+  // not something a reader can reconcile with the chart in front of them.
   const fmtDebt = (hours) => {
     if (hours == null || isNaN(hours)) return { value: '-', suffix: '' };
     const mins = Math.round(hours * 60);
-    if (mins <= 0) return { value: 'None', suffix: '' };
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    if (h === 0) return { value: `${m}m`, suffix: 'short' };
-    if (m === 0) return { value: `${h}h`, suffix: 'short' };
-    return { value: `${h}h ${m}m`, suffix: 'short' };
+    if (mins === 0) return { value: 'Even', suffix: '' };
+    const suffix = mins > 0 ? 'short' : 'ahead';
+    const abs = Math.abs(mins);
+    const h = Math.floor(abs / 60);
+    const m = abs % 60;
+    if (h === 0) return { value: `${m}m`, suffix };
+    if (m === 0) return { value: `${h}h`, suffix };
+    return { value: `${h}h ${m}m`, suffix };
   };
 
   const fmtHM = (hours) => {
@@ -1490,12 +1495,16 @@ function GarminSleepAnalyzer() {
               // Debt is a rolling 14-night trend and does not follow the night stepper.
               const nights = sorted.slice(-14).map(toNight);
               const last = toNight(sorted[Math.max(0, sorted.length - 1 - heroOffset)]);
+              // Net across the window: nights you beat your need pay down the
+              // nights you missed. Flooring each night at zero discarded every
+              // surplus, so the figure could only ever climb -- it read "37m
+              // short" during a fortnight that was 5h20m in credit.
               const debtHrs = nights.reduce((sum, d) => {
                 if (d.duration == null || d.sleepNeed == null) return sum;
-                return sum + Math.max(0, d.sleepNeed - d.duration);
+                return sum + (d.sleepNeed - d.duration);
               }, 0);
-              // Green means no debt at all. A small deficit is neither good nor
-              // alarming, so it reads neutral rather than congratulating a shortfall.
+              // A surplus, or breaking even, is good. A small deficit is neither
+              // good nor alarming, so it reads neutral rather than alarmed.
               const debtColor = debtHrs <= 0 ? 'text-green-400'
                 : debtHrs < 2 ? 'text-gray-300'
                 : debtHrs < 5 ? 'text-yellow-400'
@@ -1547,7 +1556,7 @@ function GarminSleepAnalyzer() {
                     </div>
                     {/* RISE-style sleep debt */}
                     <div className="flex flex-col justify-center">
-                      <div className={`${T_LABEL} mb-1`}>Sleep debt · last 14 nights</div>
+                      <div className={`${T_LABEL} mb-1`}>Sleep balance · last 14 nights</div>
                       <div className={`${T_VALUE} mb-2 ${debtColor}`}>
                         {fmtDebt(debtHrs).value}
                         {fmtDebt(debtHrs).suffix && <span className={`${T_LABEL} ml-2`}>{fmtDebt(debtHrs).suffix}</span>}
