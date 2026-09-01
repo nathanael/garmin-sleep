@@ -1040,7 +1040,7 @@ function GarminSleepAnalyzer() {
     if (hours == null || isNaN(hours)) return { value: '-', suffix: '' };
     const mins = Math.round(hours * 60);
     if (mins === 0) return { value: 'Even', suffix: '' };
-    const suffix = mins > 0 ? 'short' : 'ahead';
+    const suffix = mins > 0 ? 'short' : 'excess';
     const abs = Math.abs(mins);
     const h = Math.floor(abs / 60);
     const m = abs % 60;
@@ -1556,10 +1556,10 @@ function GarminSleepAnalyzer() {
                     </div>
                     {/* RISE-style sleep debt */}
                     <div className="flex flex-col justify-center">
-                      <div className={`${T_LABEL} mb-1`}>Sleep balance · last 14 nights</div>
+                      <div className={`${T_LABEL} mb-1`}>Sleep · last 14 nights</div>
                       <div className={`${T_VALUE} mb-2 ${debtColor}`}>
                         {fmtDebt(debtHrs).value}
-                        {fmtDebt(debtHrs).suffix && <span className={`${T_LABEL} ml-2`}>{fmtDebt(debtHrs).suffix}</span>}
+                        {fmtDebt(debtHrs).suffix && <span className="text-xl font-normal ml-2">{fmtDebt(debtHrs).suffix}</span>}
                       </div>
                       <div className="flex gap-1 h-7">
                         {nights.map((d, i) => {
