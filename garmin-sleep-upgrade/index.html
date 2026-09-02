@@ -77,7 +77,9 @@ function useCountUp(target, ms = 400) {
 // number, so they cannot disagree the way a fixed max and a separate threshold
 // table did.
 const BASELINE_MIN = 14;
-const BASELINE_WINDOW = 90;
+// WHOOP mode compares against roughly a month of your own nights, which is
+// close to what WHOOP itself does and responsive enough to track a trend.
+const BASELINE_WINDOW = 30;
 const METRIC_DIRECTION = {
   hrv: 'higher', duration: 'higher', rem: 'higher', deep: 'higher', spo2: 'higher',
   rhr: 'lower',      // a lower resting heart rate is better
@@ -180,6 +182,99 @@ function personalStanding(metric, value, series) {
   return { pct, color, rank, noun, n: xs.length, band };
 }
 
+// Shared colour bands for "how much of the target did you hit".
+const targetColor = pct => pct >= 100 ? '#10b981' : pct >= 85 ? '#9ca3af' : pct >= 70 ? '#eab308' : '#ef4444';
+const pctOf = (value, target) => Math.max(0, Math.min(100, (value / target) * 100));
+
+// WHOOP philosophy: everything against your own recent baseline, and normal is
+// good. The arc still shows where tonight sits inside your usual range so it
+// stays informative, but the colour only turns when you leave that range in
+// the direction that matters -- HRV down, RHR up, resp either way, SpO2 down.
+function whoopStanding(metric, value, series, night) {
+  if (value == null || isNaN(value)) return null;
+  if (metric === 'duration') {
+    if (night.sleepNeed == null) return null;
+    const pct = pctOf(value, night.sleepNeed);
+    return { pct, color: targetColor(pct),
+             tip: [`${Math.round(pct)}% of your sleep need`, `${fmtHMs(value)} of ${fmtHMs(night.sleepNeed)}`] };
+  }
+  const xs = series.filter(v => v != null && !isNaN(v));
+  if (xs.length < BASELINE_MIN) return null;
+  const asc = [...xs].sort((a, b) => a - b);
+  const lo = quantile(asc, 0.10), hi = quantile(asc, 0.90), med = quantile(asc, 0.5);
+  const width = (hi - lo) || 1;
+  // Which way is "worse" for this metric.
+  const worse = { hrv: 'below', spo2: 'below', rhr: 'above', resp: 'either', rem: 'below', deep: 'below' }[metric];
+  const outsideBelow = value < lo, outsideAbove = value > hi;
+  const bad = (worse === 'below' && outsideBelow) || (worse === 'above' && outsideAbove)
+           || (worse === 'either' && (outsideBelow || outsideAbove));
+  // Arc: position within the band, oriented so fuller is better. Inside the
+  // band it spans 40-100% so a green ring is never nearly empty; outside in
+  // the bad direction it falls from 40% toward 0 with distance.
+  let pos = (value - lo) / width;
+  if (worse === 'above') pos = 1 - pos;
+  if (worse === 'either') pos = 1 - Math.abs(value - med) / (width / 2);
+  pos = Math.max(0, Math.min(1, pos));
+  const dist = bad ? (outsideBelow ? lo - value : value - hi) / width : 0;
+  const pct = bad ? Math.max(0, 40 - dist * 40) : 40 + pos * 60;
+  let color, head;
+  if (bad) {
+    color = dist < 0.5 ? '#eab308' : '#ef4444';
+    head = outsideBelow ? 'Below your usual range' : 'Above your usual range';
+  } else if (outsideBelow || outsideAbove) {
+    color = '#10b981';
+    head = outsideAbove ? 'Above your usual range' : 'Below your usual range';
+  } else {
+    color = (metric === 'rem' || metric === 'deep') && value < med ? '#9ca3af' : '#10b981';
+    head = 'Within your usual range';
+  }
+  return { pct, color, tip: [head, `usual ${round1(lo)}–${round1(hi)} · median ${round1(med)}`] };
+}
+
+// Garmin philosophy: fixed guideline targets, the same for everyone. The one
+// exception is HRV, where Garmin itself grades you against your own baseline
+// and reports a status -- so that verdict is shown as-is.
+function garminStanding(metric, value, night, unit) {
+  if (metric === 'hrv') {
+    const st = (night.hrvStatus || '').toUpperCase();
+    const map = { BALANCED: [100, '#10b981', 'Balanced'], UNBALANCED: [60, '#eab308', 'Unbalanced'], LOW: [30, '#ef4444', 'Low'] };
+    if (map[st]) return { pct: map[st][0], color: map[st][1], tip: [`Garmin: ${map[st][2]}`, 'vs your 3-week baseline'] };
+    return { pct: 50, color: '#4b5563', tip: ['No Garmin HRV status', 'for this night'] };
+  }
+  if (value == null || isNaN(value)) return null;
+  if (metric === 'duration') {
+    if (night.sleepNeed == null) return null;
+    const pct = pctOf(value, night.sleepNeed);
+    return { pct, color: targetColor(pct), tip: [`${Math.round(pct)}% of your sleep need`, `${fmtHMs(value)} of ${fmtHMs(night.sleepNeed)}`] };
+  }
+  if (metric === 'rem' || metric === 'deep') {
+    const target = metric === 'rem' ? 90 : 60;
+    const pct = pctOf(value, target);
+    return { pct, color: targetColor(pct), tip: [`${Math.round((value / target) * 100)}% of the ${target} min target`, `${Math.round(value)} min`] };
+  }
+  if (metric === 'rhr') {
+    const pct = pctOf(60, value);
+    return { pct, color: targetColor(pct), tip: [value <= 60 ? 'At or below 60 bpm' : `${Math.round(value - 60)} bpm over 60`, 'guideline: 60 or under'] };
+  }
+  if (metric === 'resp') {
+    const d = value < 12 ? 12 - value : value > 20 ? value - 20 : 0;
+    const pct = Math.max(0, 100 - d * 25);
+    return { pct, color: d === 0 ? '#10b981' : d < 2 ? '#eab308' : '#ef4444',
+             tip: [d === 0 ? 'Within 12–20 brpm' : `${round1(d)} brpm outside 12–20`, 'guideline: 12–20 brpm'] };
+  }
+  if (metric === 'spo2') {
+    return { pct: value, color: value >= 95 ? '#10b981' : value >= 90 ? '#eab308' : '#ef4444',
+             tip: [value >= 95 ? 'Normal (95% or above)' : value >= 90 ? 'Slightly low' : 'Low', `${value}% · guideline: 95% or above`] };
+  }
+  return null;
+}
+
+// "7h 24m" for a value in hours.
+function fmtHMs(hours) {
+  const m = Math.round(hours * 60);
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
 const Donut = ({ value, max, pct: pctOverride, color, size = 68, stroke = 8, label, unit, tip }) => {
   const [hovered, setHovered] = React.useState(false);
   const shown = useCountUp(typeof value === 'number' ? value : null);
@@ -232,6 +327,13 @@ function GarminSleepAnalyzer() {
   const [error, setError] = useState(null);
   const [activeChart, setActiveChart] = useState('score');
   const [heroOffset, setHeroOffset] = useState(0); // 0 = most recent night
+  // How the contributor rings are judged: against your own baseline (WHOOP)
+  // or against fixed guideline targets (Garmin).
+  const [ringMode, setRingMode] = useState(() => {
+    try { return localStorage.getItem('garmin_ring_mode') === 'whoop' ? 'whoop' : 'garmin'; }
+    catch { return 'garmin'; }
+  });
+  const chooseRingMode = (m) => { setRingMode(m); try { localStorage.setItem('garmin_ring_mode', m); } catch {} };
   const [savedFiles, setSavedFiles] = useState([]);
   const [currentFileName, setCurrentFileName] = useState('');
   const [uploadExpanded, setUploadExpanded] = useState(true);
@@ -1476,25 +1578,21 @@ function GarminSleepAnalyzer() {
                 respiration: d.averageRespiration,
                 spo2: d.spo2SleepSummary?.averageSPO2,
                 sleepNeed: d.sleepNeedMinutes ? d.sleepNeedMinutes / 60 : null,
+                hrvStatus: d.hrvStatus,
               });
               // Baseline for the contributor rings: the user's own recent nights.
               const baseline = sorted.slice(-BASELINE_WINDOW).map(toNight);
-              const ring = (metric, key, value, max, unit) => {
-                const st = personalStanding(metric, value, baseline.map(n => n[key]));
-                return st
-                  ? { pct: st.pct, color: st.color,
-                      tip: [st.rank === 1
-                              ? (st.noun === 'closest to your normal'
-                                  ? `Closest to your normal across ${st.n} nights`
-                                  : `Your ${st.noun} of ${st.n} nights`)
-                              : `${st.rank}${ordinal(st.rank)} ${st.noun} of ${st.n} nights`,
-                            `usual range ${round1(st.band[0])}–${round1(st.band[1])}${unit ? ' ' + unit : ''}`] }
-                  : { max, color: qualify(metric, value).color,
-                      tip: ['Not enough history yet', 'using general guidance'] };
-              };
               // Debt is a rolling 14-night trend and does not follow the night stepper.
               const nights = sorted.slice(-14).map(toNight);
               const last = toNight(sorted[Math.max(0, sorted.length - 1 - heroOffset)]);
+              const ring = (metric, key, value, max, unit) => {
+                const st = ringMode === 'whoop'
+                  ? (whoopStanding(metric, value, baseline.map(n => n[key]), last) || garminStanding(metric, value, last, unit))
+                  : garminStanding(metric, value, last, unit);
+                return st
+                  ? { pct: st.pct, color: st.color, tip: st.tip }
+                  : { max, color: qualify(metric, value).color, tip: ['No data', 'for this night'] };
+              };
               // Net across the window: nights you beat your need pay down the
               // nights you missed. Flooring each night at zero discarded every
               // surplus, so the figure could only ever climb -- it read "37m
@@ -1577,7 +1675,14 @@ function GarminSleepAnalyzer() {
                     </div>
                   </div>
                   {/* Oura-style contributor rings */}
-                  <div className="pt-4">
+                  <div className="pt-3">
+                    <div className="flex justify-end font-mono text-xs select-none gap-2 mb-2">
+                      <button onClick={() => chooseRingMode('whoop')} title="Against your own recent baseline"
+                        className={`transition-colors ${ringMode === 'whoop' ? 'text-gray-200' : 'text-gray-600 hover:text-gray-300'}`}>WHOOP</button>
+                      <span className="text-gray-700">·</span>
+                      <button onClick={() => chooseRingMode('garmin')} title="Against fixed guideline targets"
+                        className={`transition-colors ${ringMode === 'garmin' ? 'text-gray-200' : 'text-gray-600 hover:text-gray-300'}`}>Garmin</button>
+                    </div>
                     <div className="flex flex-wrap gap-3 justify-around">
                       <Donut value={last.duration} {...ring('duration', 'duration', last.duration, 9, 'hrs')} label="Duration" unit="hrs" />
                       <Donut value={last.rem} {...ring('rem', 'rem', last.rem, 120, 'min')} label="REM" unit="min" />
