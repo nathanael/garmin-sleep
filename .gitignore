@@ -8,3 +8,7 @@ sync-error.log
 .mcp.json
 firebase-admin.json
 .config.json
+.superpowers/
+.venv
+server.log
+server-error.log

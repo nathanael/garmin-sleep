@@ -9,7 +9,7 @@ If you'd rather not give your Garmin credentials to anything, you can feed the d
 1. Request your data from Garmin: [garmin.com/account/datamanagement](https://www.garmin.com/account/datamanagement/) → select the **Sleep** category → wait for the email → download and unzip.
 2. In the unzipped archive, open `DI_CONNECT/DI_CONNECT_FITNESS/` and find any JSON files with `sleep` in the name.
 3. Double-click `index.html` in this directory to open it in your default browser.
-4. Drag the JSON files onto the drop zone. Data is cached to `localStorage` so you only need to do this once per browser.
+4. Click **"or load a Garmin export instead"** beneath the sign-in form, then drag the JSON files onto the page. Data is cached to `localStorage` so you only need to do this once per browser.
 
 ## Expected JSON schema
 

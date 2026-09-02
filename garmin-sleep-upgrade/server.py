@@ -3,12 +3,15 @@
 
 import json
 import sqlite3
-import subprocess
 import sys
-from http.server import SimpleHTTPRequestHandler, HTTPServer
+import threading
+from datetime import date
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import db
+import sync_jobs
 from garmy import AuthClient
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -19,30 +22,127 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 auth = AuthClient()
 mfa_state = {}  # temporary storage for MFA flow
 
-SLEEP_QUERY = """
+# Guards `mfa_state` and every call into `auth` (login/resume_login/logout/
+# refresh_tokens/is_authenticated/needs_refresh). Under the old single-
+# threaded HTTPServer only one request was ever in flight, so this was
+# implicitly safe; ThreadingHTTPServer makes concurrent requests possible,
+# and garmy.AuthClient's internal thread-safety is unknown, so we serialize
+# access at this boundary instead. This deliberately holds the lock across
+# the network call inside auth.login()/resume_login()/logout()/
+# refresh_tokens() -- there's no way to safely serialize calls into an
+# opaque client object without covering the call itself, so two concurrent
+# auth requests will block on each other rather than run in parallel. That
+# is an acceptable tradeoff for a single-user local tool where correctness
+# under a rare double-submit matters more than auth-endpoint throughput.
+AUTH_LOCK = threading.Lock()
+
+RUNNER = sync_jobs.JobRunner(
+    str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable,
+    str(SYNC_SCRIPT),
+)
+
+# /api/sleep field map: (source_column, sql_expression, output_alias).
+#
+# garmy's `localdb` schema has changed columns across versions (garmy 2.0.0's
+# SyncManager never creates avg_sleep_stress, sleep_score, lowest_spo2, or
+# sleep_need_minutes on daily_health_metrics), and will likely change again.
+# db.ensure_sleep_metric_columns() (called at startup, below) adds those four
+# back so sync.py's sleep-summary backfill has somewhere to write them, but
+# build_sleep_query() still defends against any of them -- or any future
+# garmy schema change -- being absent: it checks each source_column against
+# the table's live schema and substitutes NULL AS <alias> for anything
+# missing, so the endpoint keeps returning its usual response shape instead
+# of raising sqlite3.OperationalError.
+SLEEP_FIELDS = [
+    ("metric_date", "metric_date", "calendarDate"),
+    ("deep_sleep_hours", "CAST(ROUND(deep_sleep_hours * 3600) AS INTEGER)", "deepSleepSeconds"),
+    ("light_sleep_hours", "CAST(ROUND(light_sleep_hours * 3600) AS INTEGER)", "lightSleepSeconds"),
+    ("rem_sleep_hours", "CAST(ROUND(rem_sleep_hours * 3600) AS INTEGER)", "remSleepSeconds"),
+    ("awake_hours", "CAST(ROUND(awake_hours * 3600) AS INTEGER)", "awakeSleepSeconds"),
+    ("avg_sleep_respiration_value", "avg_sleep_respiration_value", "averageRespiration"),
+    ("lowest_respiration_value", "lowest_respiration_value", "lowestRespiration"),
+    ("avg_sleep_stress", "avg_sleep_stress", "avgSleepStress"),
+    ("sleep_score", "sleep_score", "sleep_score"),
+    ("average_spo2", "average_spo2", "average_spo2"),
+    ("lowest_spo2", "lowest_spo2", "lowest_spo2"),
+    ("hrv_last_night_avg", "hrv_last_night_avg", "hrvOvernight"),
+    ("hrv_weekly_avg", "hrv_weekly_avg", "hrvWeeklyAvg"),
+    ("hrv_status", "hrv_status", "hrvStatus"),
+    ("resting_heart_rate", "resting_heart_rate", "restingHr"),
+    ("body_battery_high", "body_battery_high", "bodyBatteryHigh"),
+    ("sleep_need_minutes", "sleep_need_minutes", "sleepNeedMinutes"),
+]
+
+# Columns referenced by the "row has some sleep data" filter. Guarded the
+# same way: any that don't exist are dropped out of the OR'd condition, and
+# if none exist at all the whole clause is omitted.
+SLEEP_PRESENCE_COLUMNS = ["deep_sleep_hours", "light_sleep_hours", "rem_sleep_hours"]
+
+SLEEP_TABLE = "daily_health_metrics"
+
+
+def table_columns(conn, table):
+    """Return the set of column names that currently exist in `table`.
+
+    `table` is always one of our own constants, never request input.
+    """
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def build_sleep_query(available_columns, date_filter=""):
+    """Build the /api/sleep SELECT against whatever columns actually exist.
+
+    `available_columns` is the live set of column names on daily_health_metrics
+    (from table_columns()). `date_filter` is the pre-formatted, already-safe
+    "  AND metric_date >= date(...)\\n" fragment (or "") from serve_sleep_api.
+    """
+    available_columns = set(available_columns)
+
+    select_list = ",\n    ".join(
+        f"{expr} AS {alias}" if source in available_columns else f"NULL AS {alias}"
+        for source, expr, alias in SLEEP_FIELDS
+    )
+
+    presence_conditions = [
+        f"{col} IS NOT NULL" for col in SLEEP_PRESENCE_COLUMNS if col in available_columns
+    ]
+    presence_clause = (
+        f"  AND ({' OR '.join(presence_conditions)})\n" if presence_conditions else ""
+    )
+
+    return f"""
 SELECT
-    metric_date AS calendarDate,
-    CAST(ROUND(deep_sleep_hours * 3600) AS INTEGER) AS deepSleepSeconds,
-    CAST(ROUND(light_sleep_hours * 3600) AS INTEGER) AS lightSleepSeconds,
-    CAST(ROUND(rem_sleep_hours * 3600) AS INTEGER) AS remSleepSeconds,
-    CAST(ROUND(awake_hours * 3600) AS INTEGER) AS awakeSleepSeconds,
-    avg_sleep_respiration_value AS averageRespiration,
-    lowest_respiration_value AS lowestRespiration,
-    avg_sleep_stress AS avgSleepStress,
-    sleep_score,
-    average_spo2,
-    lowest_spo2,
-    hrv_last_night_avg AS hrvOvernight,
-    hrv_weekly_avg AS hrvWeeklyAvg,
-    hrv_status AS hrvStatus,
-    resting_heart_rate AS restingHr,
-    body_battery_high AS bodyBatteryHigh,
-    sleep_need_minutes AS sleepNeedMinutes
-FROM daily_health_metrics
+    {select_list}
+FROM {SLEEP_TABLE}
 WHERE user_id = 1
-  AND (deep_sleep_hours IS NOT NULL OR light_sleep_hours IS NOT NULL OR rem_sleep_hours IS NOT NULL)
-{}ORDER BY metric_date
+{presence_clause}{date_filter}ORDER BY calendarDate
 """
+
+
+def shape_sleep_row(row):
+    """Nest spo2 and sleep-score fields the way the frontend expects.
+
+    A field reads as None here whether the DB column exists but the value is
+    NULL, or the column doesn't exist and build_sleep_query() substituted
+    NULL AS <alias> for it — both cases are handled identically, so a garmy
+    schema that's missing a column produces the same JSON shape (key absent)
+    as one that has the column with a NULL value in it.
+    """
+    r = dict(row)
+    avg_spo2 = r.pop("average_spo2", None)
+    low_spo2 = r.pop("lowest_spo2", None)
+    spo2_obj = {}
+    if avg_spo2 is not None:
+        spo2_obj["averageSPO2"] = avg_spo2
+    if low_spo2 is not None:
+        spo2_obj["lowestSPO2"] = low_spo2
+    if spo2_obj:
+        r["spo2SleepSummary"] = spo2_obj
+    # Nest sleep score as analyzer expects
+    score = r.pop("sleep_score", None)
+    if score is not None:
+        r["sleepScores"] = {"overallScore": score}
+    return r
 
 
 def json_response(handler, data, status=200):
@@ -79,6 +179,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.serve_sleep_api(parsed.query)
         elif parsed.path == "/api/auth/status":
             self.serve_auth_status()
+        elif parsed.path == "/api/sync/status":
+            json_response(self, RUNNER.status())
         else:
             super().do_GET()
 
@@ -99,12 +201,14 @@ class Handler(SimpleHTTPRequestHandler):
     # --- Auth endpoints ---
 
     def serve_auth_status(self):
-        if not auth.is_authenticated and auth.needs_refresh:
-            try:
-                auth.refresh_tokens()
-            except Exception:
-                pass
-        json_response(self, {"authenticated": auth.is_authenticated})
+        with AUTH_LOCK:
+            if not auth.is_authenticated and auth.needs_refresh:
+                try:
+                    auth.refresh_tokens()
+                except Exception:
+                    pass
+            authenticated = auth.is_authenticated
+        json_response(self, {"authenticated": authenticated})
 
     def serve_auth_login(self):
         global mfa_state
@@ -114,33 +218,42 @@ class Handler(SimpleHTTPRequestHandler):
         if not email or not password:
             json_response(self, {"ok": False, "error": "Email and password required"}, 400)
             return
-        try:
-            result = auth.login(email, password, return_on_mfa=True)
-            if isinstance(result, tuple) and result[0] == "needs_mfa":
-                mfa_state = result[1]
-                json_response(self, {"ok": True, "mfa_required": True})
-            else:
-                mfa_state = {}
-                json_response(self, {"ok": True, "mfa_required": False})
-        except Exception as e:
-            json_response(self, {"ok": False, "error": str(e)}, 401)
+
+        with AUTH_LOCK:
+            try:
+                result = auth.login(email, password, return_on_mfa=True)
+                if isinstance(result, tuple) and result[0] == "needs_mfa":
+                    mfa_state = result[1]
+                    response, status = {"ok": True, "mfa_required": True}, 200
+                else:
+                    mfa_state = {}
+                    response, status = {"ok": True, "mfa_required": False}, 200
+            except Exception as e:
+                response, status = {"ok": False, "error": str(e)}, 401
+
+        json_response(self, response, status)
 
     def serve_auth_mfa(self):
         global mfa_state
         body = read_body(self)
         code = body.get("code", "")
-        if not code or not mfa_state:
-            json_response(self, {"ok": False, "error": "MFA code required"}, 400)
-            return
-        try:
-            auth.resume_login(code, mfa_state)
-            mfa_state = {}
-            json_response(self, {"ok": True})
-        except Exception as e:
-            json_response(self, {"ok": False, "error": str(e)}, 401)
+
+        with AUTH_LOCK:
+            if not code or not mfa_state:
+                response, status = {"ok": False, "error": "MFA code required"}, 400
+            else:
+                try:
+                    auth.resume_login(code, mfa_state)
+                    mfa_state = {}
+                    response, status = {"ok": True}, 200
+                except Exception as e:
+                    response, status = {"ok": False, "error": str(e)}, 401
+
+        json_response(self, response, status)
 
     def serve_auth_logout(self):
-        auth.logout()
+        with AUTH_LOCK:
+            auth.logout()
         json_response(self, {"ok": True})
 
     # --- Sync endpoint ---
@@ -149,25 +262,24 @@ class Handler(SimpleHTTPRequestHandler):
         body = read_body(self)
         start_date = body.get("start")
         end_date = body.get("end")
-        days = body.get("days", 7)
 
-        python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
         if start_date and end_date:
-            cmd = [python, str(SYNC_SCRIPT), "--range", start_date, end_date]
+            ranges = [(start_date, end_date)]
         else:
-            cmd = [python, str(SYNC_SCRIPT), str(days)]
+            ranges = sync_jobs.chain_ranges(date.today())
 
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-            resp = {
-                "ok": result.returncode == 0,
-                "output": result.stdout.strip(),
-                "error": (result.stdout.strip() + " " + result.stderr.strip()).strip() if result.returncode != 0 else None,
-            }
-        except subprocess.TimeoutExpired:
-            resp = {"ok": False, "output": "", "error": "Sync timed out (10 min)"}
+        job_id, job = RUNNER.start(ranges)
+        if job_id is None:
+            json_response(
+                self, {"error": "sync already running", "job": job}, 409
+            )
+            return
 
-        json_response(self, resp)
+        json_response(
+            self,
+            {"job_id": job_id, "stage": job["stage"], "total": job["total"]},
+            202,
+        )
 
     # --- Sleep data endpoint ---
 
@@ -185,33 +297,20 @@ class Handler(SimpleHTTPRequestHandler):
                 pass
 
         date_filter = f"  AND metric_date >= date('now', '-{days} days')\n" if days else ""
-        query = SLEEP_QUERY.format(date_filter)
 
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.row_factory = sqlite3.Row
+        conn = None
         try:
+            conn = db.connect(DB_PATH)
+            conn.row_factory = sqlite3.Row
+            query = build_sleep_query(table_columns(conn, SLEEP_TABLE), date_filter)
             rows = conn.execute(query).fetchall()
-            records = []
-            for row in rows:
-                r = dict(row)
-                # Nest spo2 fields as analyzer expects
-                avg_spo2 = r.pop("average_spo2", None)
-                low_spo2 = r.pop("lowest_spo2", None)
-                spo2_obj = {}
-                if avg_spo2 is not None:
-                    spo2_obj["averageSPO2"] = avg_spo2
-                if low_spo2 is not None:
-                    spo2_obj["lowestSPO2"] = low_spo2
-                if spo2_obj:
-                    r["spo2SleepSummary"] = spo2_obj
-                # Nest sleep score as analyzer expects
-                score = r.pop("sleep_score", None)
-                if score is not None:
-                    r["sleepScores"] = {"overallScore": score}
-                records.append(r)
+            records = [shape_sleep_row(row) for row in rows]
             json_response(self, records)
+        except sqlite3.OperationalError as e:
+            self.send_error(503, f"Database busy: {e}")
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     def log_message(self, format, *args):
         if "/api/" in str(args[0]):
@@ -220,8 +319,16 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     import os
+
+    if DB_PATH.exists():
+        conn = db.connect(DB_PATH)
+        try:
+            db.ensure_sleep_metric_columns(conn)
+        finally:
+            conn.close()
+
     port = int(os.environ.get("PORT", sys.argv[1] if len(sys.argv) > 1 else 8484))
-    server = HTTPServer(("", port), Handler)
+    server = ThreadingHTTPServer(("", port), Handler)
     print(f"Garmin Sleep Love → http://localhost:{port}")
     print(f"Database: {DB_PATH} ({'found' if DB_PATH.exists() else 'NOT FOUND'})")
     print(f"Authenticated: {auth.is_authenticated}")

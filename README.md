@@ -6,7 +6,7 @@
 
 ## What it shows
 
-- **Summary cards and trend charts** — sleep score, duration, REM, deep, respiration, SpO2, stress, HRV, resting heart rate. Each card shows the delta against the prior period of the same length.
+- **Summary cards and trend charts** — sleep score, duration, REM, deep, respiration, SpO2 (average and low), stress, HRV, resting heart rate, body battery, sleep debt. Each card shows the delta against the prior period of the same length.
 - **Stage breakdown** — deep, REM, and light minutes stacked per night, so you can see composition change at a glance.
   ![Stage breakdown](docs/screenshots/architecture.png)
 - **Compare any two periods** — drag-to-select on any chart, or pick two windows explicitly, and get a day-by-day overlay with summary deltas.
@@ -26,15 +26,16 @@ Garmin Connect  ──(OAuth)──►  garmy  ──►  sync.py  ──►  he
 
 ## Install
 
-Prerequisites: macOS or Linux, Python 3.10+. If your Garmin account has MFA enabled, the login step will prompt for the code.
+Prerequisites: macOS or Linux, Python 3.10+.
 
 ```bash
 git clone https://github.com/<you>/garmin-sleep.git
 cd garmin-sleep
-./setup-garmy.sh                                   # creates .venv, installs garmy, runs one-time Garmin login
-.venv/bin/python sync.py 30                        # pulls the last 30 days of data
+./setup-garmy.sh                                   # creates .venv, installs garmy
 .venv/bin/python garmin-sleep-upgrade/server.py    # opens at http://localhost:8484
 ```
+
+> Sign in on the page itself. The first 7 days sync immediately; 30 days and then the last 12 months fill in behind you. Older history is a button in the dashboard.
 
 ## Daily sync (optional)
 
