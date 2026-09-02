@@ -92,20 +92,52 @@ def days_since_last_sync():
     return 7  # fallback if DB is empty or unreadable
 
 
-def earliest_recent_failure():
-    """Return the oldest failed sync date within the last 14 days, if any."""
+def earliest_missing_sleep(db_path=None, within_days=14):
+    """Oldest recent day whose sleep never landed, or None if all are present.
+
+    This is what the scheduled runs are actually chasing: the watch often
+    uploads a night hours after the first sync of the morning.
+
+    Deliberately keyed on missing sleep rather than on failed sync_status
+    rows. Some metrics fail permanently -- Garmin returns null samples for
+    heart_rate and body_battery, which the timeseries table rejects with a
+    NOT NULL constraint -- so those rows are rewritten as 'failed' on every
+    single run and never clear. A status-based window is therefore pinned
+    open forever, widening every sync to a fortnight even when every night's
+    sleep is already recorded. Missing sleep, by contrast, resolves itself
+    once the night uploads, and any day that never resolves ages out of the
+    window on its own.
+
+    Only considers days that already exist in the table, so it never invents
+    a backfill for dates that were never synced at all.
+    """
     try:
-        db = sqlite3.connect(str(DB_PATH))
-        cur = db.cursor()
-        cur.execute(
-            "SELECT MIN(sync_date) FROM sync_status "
-            "WHERE status = 'failed' AND sync_date >= date('now', '-14 days')"
-        )
-        row = cur.fetchone()[0]
-        db.close()
+        conn = sqlite3.connect(str(db_path or DB_PATH))
+        row = conn.execute(
+            "SELECT MIN(metric_date) FROM daily_health_metrics "
+            "WHERE sleep_duration_hours IS NULL "
+            "AND metric_date >= date('now', ?)",
+            (f"-{within_days} days",),
+        ).fetchone()[0]
+        conn.close()
         return date.fromisoformat(row) if row else None
     except Exception:
         return None
+
+
+def todays_sleep_recorded(db_path=None):
+    """True when today's row already carries a sleep duration."""
+    try:
+        conn = sqlite3.connect(str(db_path or DB_PATH))
+        row = conn.execute(
+            "SELECT sleep_duration_hours FROM daily_health_metrics "
+            "WHERE metric_date = ?",
+            (date.today().isoformat(),),
+        ).fetchone()
+        conn.close()
+        return bool(row and row[0] is not None)
+    except Exception:
+        return False
 
 
 def main():
@@ -117,14 +149,22 @@ def main():
         end_date = date.today()
         start_date = end_date - timedelta(days=days - 1)
     else:
+        # Scheduled mode runs eleven times a day to catch a late upload. Once
+        # today's night is in and no recent night is missing, there is nothing
+        # left to chase, so skip the whole fetch rather than re-pulling a
+        # fortnight from Garmin ten more times before noon.
+        missing = earliest_missing_sleep()
+        if missing is None and todays_sleep_recorded():
+            print("Sleep is already recorded for today and every recent night; nothing to sync.")
+            return
+
         days = days_since_last_sync()
         end_date = date.today()
         start_date = end_date - timedelta(days=days - 1)
-        # Failed days (e.g. sleep not yet uploaded from watch at 7am) would
-        # otherwise never be retried, since MAX(metric_date) is always fresh.
-        failed = earliest_recent_failure()
-        if failed and failed < start_date:
-            start_date = failed
+        # A night the watch uploaded late would otherwise never be picked up,
+        # since MAX(metric_date) is always fresh.
+        if missing and missing < start_date:
+            start_date = missing
 
     auth = AuthClient()
     if not auth.is_authenticated:

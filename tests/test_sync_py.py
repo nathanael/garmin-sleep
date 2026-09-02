@@ -6,7 +6,9 @@ or a real account. Never call sync.main() from a test; see CLAUDE.md /
 the task brief for why sync.py must never actually run in this repo.
 """
 import sys
+import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -129,3 +131,105 @@ class ExtractSleepMetricsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EarliestMissingSleepTests(unittest.TestCase):
+    """The scheduled runs chase missing sleep, not failed sync_status rows.
+
+    heart_rate and body_battery fail on every single run (Garmin returns null
+    samples; the timeseries table rejects them), so a status-based window never
+    closes. These tests pin the behaviour that replaced it.
+    """
+
+    def _db(self, rows):
+        import sqlite3
+        path = Path(self.tmp.name) / "health.db"
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE TABLE daily_health_metrics ("
+            "metric_date TEXT, sleep_duration_hours REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO daily_health_metrics VALUES (?, ?)", rows
+        )
+        conn.commit()
+        conn.close()
+        return path
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _day(self, offset):
+        return (date.today() - timedelta(days=offset)).isoformat()
+
+    def test_returns_none_when_every_recent_night_has_sleep(self):
+        path = self._db([(self._day(i), 7.5) for i in range(5)])
+        self.assertIsNone(sync.earliest_missing_sleep(path))
+
+    def test_returns_the_oldest_night_that_is_missing_sleep(self):
+        path = self._db([
+            (self._day(0), 7.5),
+            (self._day(2), None),
+            (self._day(4), None),
+        ])
+        self.assertEqual(
+            sync.earliest_missing_sleep(path),
+            date.today() - timedelta(days=4),
+        )
+
+    def test_ignores_missing_nights_older_than_the_window(self):
+        path = self._db([(self._day(0), 7.5), (self._day(40), None)])
+        self.assertIsNone(sync.earliest_missing_sleep(path))
+
+    def test_a_permanently_failing_metric_does_not_hold_the_window_open(self):
+        """The whole point: days can be riddled with failed metric rows and
+        still be complete as far as this job is concerned."""
+        path = self._db([(self._day(i), 8.0) for i in range(14)])
+        import sqlite3
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE sync_status (sync_date TEXT, metric_type TEXT, status TEXT)")
+        conn.executemany(
+            "INSERT INTO sync_status VALUES (?, 'heart_rate', 'failed')",
+            [(self._day(i),) for i in range(14)],
+        )
+        conn.commit()
+        conn.close()
+        self.assertIsNone(sync.earliest_missing_sleep(path))
+
+    def test_missing_database_is_treated_as_nothing_missing(self):
+        self.assertIsNone(
+            sync.earliest_missing_sleep(Path(self.tmp.name) / "absent.db")
+        )
+
+
+class TodaysSleepRecordedTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _db(self, rows):
+        import sqlite3
+        path = Path(self.tmp.name) / "health.db"
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE TABLE daily_health_metrics ("
+            "metric_date TEXT, sleep_duration_hours REAL)"
+        )
+        conn.executemany("INSERT INTO daily_health_metrics VALUES (?, ?)", rows)
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_true_when_today_has_a_duration(self):
+        path = self._db([(date.today().isoformat(), 7.4)])
+        self.assertTrue(sync.todays_sleep_recorded(path))
+
+    def test_false_when_todays_row_exists_but_sleep_is_null(self):
+        path = self._db([(date.today().isoformat(), None)])
+        self.assertFalse(sync.todays_sleep_recorded(path))
+
+    def test_false_when_today_has_no_row_at_all(self):
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        path = self._db([(yesterday, 8.0)])
+        self.assertFalse(sync.todays_sleep_recorded(path))

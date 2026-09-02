@@ -386,14 +386,14 @@ function GarminSleepAnalyzer() {
       
       const end = new Date(maxDate);
       const start = new Date(end);
-      start.setDate(start.getDate() - 29);
+      start.setDate(start.getDate() - 13);
       const startStr = start.toISOString().split('T')[0];
       const finalStart = startStr < minDate ? minDate : startStr;
       setDateRange({
         start: finalStart,
         end: maxDate
       });
-      setActivePreset(finalStart === minDate ? 'all' : '30d');
+      setActivePreset(finalStart === minDate ? 'all' : '14d');
       
       const endDate = new Date(maxDate);
       const midDate = new Date(endDate);
