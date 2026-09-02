@@ -31,6 +31,22 @@ def days_since_last_sync():
     return 7  # fallback if DB is empty or unreadable
 
 
+def earliest_recent_failure():
+    """Return the oldest failed sync date within the last 14 days, if any."""
+    try:
+        db = sqlite3.connect(str(DB_PATH))
+        cur = db.cursor()
+        cur.execute(
+            "SELECT MIN(sync_date) FROM sync_status "
+            "WHERE status = 'failed' AND sync_date >= date('now', '-14 days')"
+        )
+        row = cur.fetchone()[0]
+        db.close()
+        return date.fromisoformat(row) if row else None
+    except Exception:
+        return None
+
+
 def main():
     if len(sys.argv) >= 4 and sys.argv[1] == "--range":
         start_date = date.fromisoformat(sys.argv[2])
@@ -43,6 +59,11 @@ def main():
         days = days_since_last_sync()
         end_date = date.today()
         start_date = end_date - timedelta(days=days - 1)
+        # Failed days (e.g. sleep not yet uploaded from watch at 7am) would
+        # otherwise never be retried, since MAX(metric_date) is always fresh.
+        failed = earliest_recent_failure()
+        if failed and failed < start_date:
+            start_date = failed
 
     auth = AuthClient()
     if not auth.is_authenticated:
